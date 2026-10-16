@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#bfe9a9">
+<title>やぎさん牧場 〜しあわせホルモン農園〜</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐐</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ===== 上部：ゲージ & スピード ===== -->
+<header id="topbar">
+  <div class="gauge sero" id="seroGauge">
+    <span class="gicon">🌱</span>
+    <div class="gbody">
+      <div class="glabel">セロトニン <b id="seroVal">0</b></div>
+      <div class="gbar"><i id="seroBar"></i></div>
+    </div>
+  </div>
+  <div class="gauge oxy" id="oxyGauge">
+    <span class="gicon">💖</span>
+    <div class="gbody">
+      <div class="glabel">オキシトシン <b id="oxyVal">0</b> <small id="trustLv">信頼Lv.1</small></div>
+      <div class="gbar"><i id="oxyBar"></i></div>
+    </div>
+  </div>
+  <button id="speedBtn" class="pill" title="ゲームスピード切り替え">▶ 1x<span class="sp-label"> のんびり</span></button>
+  <button id="soundBtn" class="pill round" title="サウンド">🔊</button>
+  <button id="helpBtn" class="pill round" title="あそびかた">？</button>
+</header>
+
+<!-- ===== 下部：ツール & ショップ ===== -->
+<footer id="bottombar">
+  <div id="subrow"></div>
+  <nav id="tools">
+    <button class="tool" data-tool="auto"><span class="ti">👆</span><span class="tl">おまかせ</span></button>
+    <button class="tool" data-tool="stick"><span class="ti"><svg viewBox="0 0 32 32" width="28" height="28"><path d="M7 27 L25 6" stroke="#5b4636" stroke-width="7" stroke-linecap="round"/><path d="M7 27 L25 6" stroke="#b9824f" stroke-width="4" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#5b4636" stroke-width="4.5" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#b9824f" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="16.5" r="3" fill="#7bd36b" stroke="#5b4636" stroke-width="1.2"/></svg></span><span class="tl">木の棒</span><span class="lock">🔒</span></button>
+    <button class="tool" data-tool="food"><span class="ti">🥣</span><span class="tl">美味しい餌</span><span class="badge" id="foodBadge">0</span></button>
+    <button class="tool" data-tool="bell"><span class="ti">🔔</span><span class="tl">鈴</span><span class="lock">🔒</span><span class="cd" id="bellCd"></span></button>
+    <button class="tool shop" id="shopBtn"><span class="ti">🏪</span><span class="tl">ショップ</span></button>
+  </nav>
+</footer>
+
+<div id="toasts"></div>
+
+<!-- ===== ショップ ===== -->
+<div id="shopModal" class="modal hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>🏪 ショップ / アップグレード</h2>
+      <button class="close" data-close="shopModal">✕</button>
+    </div>
+    <div class="wallet">🌱 <b id="shopSero">0</b>　💖 <b id="shopOxy">0</b></div>
+    <div id="shopList"></div>
+  </div>
+</div>
+
+<!-- ===== あそびかた ===== -->
+<div id="helpModal" class="modal hidden">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>🐐 やぎさん牧場へようこそ！</h2>
+      <button class="close" data-close="helpModal">✕</button>
+    </div>
+    <div class="help">
+      <p>柵の中のヤギたちは、ときどき<b>ピョコッと脱走</b>して畑の作物を食べに来ます。<br>畑仕事とヤギとのふれあいで、2つの<b>しあわせホルモン</b>を貯めよう！</p>
+      <div class="help-grid">
+        <div><span>🌱</span><b>セロトニン</b><br>畑に種をまいて、育ったら収穫！ショップで種・畑・柵・アイテムに使えます。</div>
+        <div><span>💖</span><b>オキシトシン</b><br>脱走ヤギを<b>やさしく追い込んで戻す</b>のがいちばん増える（+12）！なでる・餌でも少し増加。信頼Lvが上がり脱走しにくく＆戻しやすく。新しいヤギのお迎えにも。</div>
+      </div>
+      <ul>
+        <li><b>👆 おまかせ</b>：タップした場所で自動で動作が変わるよ
+          <ul>
+            <li>畑 → 種まき／✨光る作物を収穫（なぞってもOK）</li>
+            <li>柵の中のヤギ → なでる（3回でまんぞく）</li>
+            <li>脱走ヤギの近く → 反対方向へ逃げる。<b>柵のゲート</b>へ追い込もう</li>
+          </ul>
+          <small>⚡脱走から8秒以内に戻すとボーナス、🎉5秒以内に続けて戻すと連続ボーナス！<br>
+          ⚠ 食べられた畑は20秒荒れて植えられない。外にヤギがいると、柵の中の子もソワソワ脱走しやすくなるよ</small>
+        </li>
+        <li><b>🪵 木の棒</b>：ビックリして2倍速で柵へ！でもヤギが拗ねて💖が減る</li>
+        <li><b>🥣 美味しい餌</b>：脱走ヤギが自分から柵へ帰る。柵の中のヤギには牧草/餌をプレゼント</li>
+        <li><b>🔔 鈴</b>：脱走中のヤギ全員を呼び戻す（クールダウンあり）</li>
+      </ul>
+      <p class="small">PC：数字キー 1〜4 でツール切替 / スペースでスピード切替。進行は自動保存されます。</p>
+    </div>
+    <button id="startBtn" class="big-btn">はじめる！</button>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
