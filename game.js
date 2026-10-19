@@ -23,11 +23,11 @@ function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; le
 // ゲームデータ
 // ---------------------------------------------------------
 const CROPS = {
-  grass:   { name: '牧草',     emoji: '🌿', seed: 1,  grow: 12, yield: 4,   unlock: 0,   color: '#7fd36b' },
-  flower:  { name: 'お花',     emoji: '🌷', seed: 4,  grow: 20, yield: 12,  unlock: 30,  color: '#ff9ccf' },
-  carrot:  { name: 'にんじん', emoji: '🥕', seed: 8,  grow: 32, yield: 24,  unlock: 70,  color: '#ffa94d' },
-  berry:   { name: 'いちご',   emoji: '🍓', seed: 15, grow: 45, yield: 45,  unlock: 150, color: '#ff6b81' },
-  pumpkin: { name: 'かぼちゃ', emoji: '🎃', seed: 30, grow: 70, yield: 100, unlock: 300, color: '#ff922b' },
+  grass:   { name: '牧草',     emoji: '🌿', seed: 1,  grow: 12, yield: 3,   unlock: 0,   color: '#7fd36b' },
+  flower:  { name: 'お花',     emoji: '🌷', seed: 4,  grow: 20, yield: 9,   unlock: 30,  color: '#ff9ccf' },
+  carrot:  { name: 'にんじん', emoji: '🥕', seed: 8,  grow: 32, yield: 18,  unlock: 70,  color: '#ffa94d' },
+  berry:   { name: 'いちご',   emoji: '🍓', seed: 15, grow: 45, yield: 34,  unlock: 150, color: '#ff6b81' },
+  pumpkin: { name: 'かぼちゃ', emoji: '🎃', seed: 30, grow: 70, yield: 75,  unlock: 300, color: '#ff922b' },
 };
 const CROP_ORDER = ['grass', 'flower', 'carrot', 'berry', 'pumpkin'];
 const MAX_PLOTS = 12, START_PLOTS = 6;
@@ -55,6 +55,8 @@ const RUIN_T = 20, CONTAGION = 0.6;
 // 追い込みの腕前ボーナス：脱走から早く戻すほど、続けて戻すほどおいしい
 const SPEED_BONUS = [{ t: 8, b: 6, label: '⚡はやい！' }, { t: 16, b: 3, label: '⏱️いいね' }];
 const COMBO_WIN = 5, COMBO_OXY = 5;
+// 両替：💖 OXY_PER_SERO → 🌱1（信頼度の経験値は減らない）
+const OXY_PER_SERO = 10;
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -735,9 +737,10 @@ function seedAction(i, fromDrag) {
   if (!pl.crop) {
     const cr = CROPS[S.seed];
     if (S.sero < cr.seed) {
-      if (S.seed === 'grass' && S.sero < 1) { toast('牧草の種はサービス！🌿'); }
-      else { if (!fromDrag) { toast(`セロトニンが足りない…（${cr.name}の種は${cr.seed}🌱）`, 'warn'); SFX.nope(); } return; }
-    } else addSero(-cr.seed, p.x, p.y - p.s * 0.2);
+      if (!fromDrag) { toast(`セロトニンが足りない…（${cr.name}の種は${cr.seed}🌱）ショップで💖を🌱に両替できるよ`, 'warn'); SFX.nope(); }
+      return;
+    }
+    addSero(-cr.seed, p.x, p.y - p.s * 0.2);
     pl.crop = S.seed; pl.t = 0;
     plotFx[i].sqv = 5;
     dustPuff(p.x, p.y + p.s * 0.1, 3);
@@ -1461,6 +1464,8 @@ function shopItems() {
   const n = goats.length;
   it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}をお迎え（${n + 1}匹目）` : 'ヤギがいっぱい！', desc: 'なでる相手が増える！ただし脱走ヤギも増えるかも', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
     buy: () => addGoat() });
+  [1, 10].forEach(k => it.push({ sec: '💱 両替（💖→🌱）', icon: '💱', name: `セロトニン ${k}🌱 に両替`, desc: `💖${OXY_PER_SERO * k} を 🌱${k} に交換（信頼Lvは下がらない）`, cost: OXY_PER_SERO * k, cur: 'oxy', done: false,
+    buy: () => { addSero(k); toast(`💱 💖${OXY_PER_SERO * k} → 🌱${k} に両替した`, 'good'); } }));
   it.push({ sec: '⚙️ その他', icon: '🗑️', name: 'データをリセット', desc: '最初からやり直す', cost: 0, cur: 'reset', done: false, buy: () => {} });
   return it;
 }
