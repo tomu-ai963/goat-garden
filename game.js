@@ -57,6 +57,8 @@ const SPEED_BONUS = [{ t: 8, b: 6, label: '⚡はやい！' }, { t: 16, b: 3, la
 const COMBO_WIN = 5, COMBO_OXY = 5;
 // 両替：💖 OXY_PER_SERO → 🌱1（信頼度の経験値は減らない）
 const OXY_PER_SERO = 10;
+// ゲート：開けっぱなしだと柵の中の子がゲートから出ていきやすい（脱走タイマーの進む倍率）
+const GATE_OPEN_ESC = 2.5;
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -80,7 +82,7 @@ function defaultState() {
     food: 1, grassItem: 0,
     goatDefs: [{ name: GOAT_NAMES[0], c: 0 }],
     speed: 1, tool: 'auto', seed: 'grass', bellCD: 0,
-    sound: true, seen: {},
+    sound: true, seen: {}, gateOpen: false,
   };
 }
 let S = defaultState();
@@ -103,6 +105,7 @@ let parts = [];
 const plotFx = Array.from({ length: MAX_PLOTS }, () => ({ sq: 0, sqv: 0 }));
 let paused = false;
 let clock = 0, herdCombo = 0, lastHerdT = -99, outsideN = 0;   // clock はゲーム内時間
+let gateK = 0, lastGateHintT = -99;   // gateK: ドアの開き具合（0=閉 1=開）の表示用
 const hover = { x: -999, y: -999, show: false };
 let clouds = [];
 
@@ -135,6 +138,7 @@ const SFX = {
   stick:   () => { tone(180, 80, 0.12, 'square', 0.08); tone(1200, 1500, 0.08, 'sine', 0.06, 0.05); },
   bell:    () => { tone(1320, 1300, 0.7, 'triangle', 0.1); tone(1760, 1740, 0.6, 'sine', 0.06, 0.05); tone(1320, 1300, 0.6, 'triangle', 0.08, 0.25); },
   escape:  () => { tone(300, 760, 0.18, 'sine', 0.1); },
+  gate:    open => { tone(open ? 260 : 420, open ? 420 : 220, 0.12, 'triangle', 0.1); tone(140, 120, 0.06, 'square', 0.05, 0.1); },
   home:    () => { tone(523, 530, 0.1, 'triangle', 0.1); tone(659, 660, 0.1, 'triangle', 0.1, 0.09); tone(784, 790, 0.16, 'triangle', 0.1, 0.18); },
   munch:   () => { tone(220, 160, 0.06, 'square', 0.035); },
   buy:     () => { tone(784, 790, 0.08, 'triangle', 0.1); tone(1046, 1050, 0.18, 'triangle', 0.1, 0.07); },
@@ -220,8 +224,9 @@ function resize() {
 
   // ヤギの位置を補正
   goats.forEach(g => {
+    g.exit = null;
     if (g.state === 'inside' || g.state === 'toGate') { const p = clampInside(g.x, g.y); g.x = p.x; g.y = p.y; g.target = null; }
-    else clampScreen(g);
+    else if (g.state !== 'exiting') clampScreen(g);
   });
   clouds = Array.from({ length: 3 }, (_, i) => ({ x: rand(0, w), y: rand(L.top, L.bottom), r: rand(90, 160) * sc, v: rand(6, 12) * sc, seed: i }));
   buildBg();
@@ -450,6 +455,27 @@ function nextEscape(g) {
   t *= 1 + (goats.length - 1) * 0.12;
   return t;
 }
+// 脱走ルート：ゲートが開いていればゲートから歩いて、閉まっていれば柵のどこかを飛び越えて出る
+function planEscape(g) {
+  if (S.gateOpen) { g.exit = { gate: true, inX: L.gateIn.x, inY: L.gateIn.y, outX: L.gateOut.x, outY: L.gateOut.y }; return; }
+  const f = L.fence, sc = L.sc, off = 44 * sc, m = 16 * sc;
+  const all = [
+    { ax: f.x, ay: f.y, bx: f.x + f.w, by: f.y, nx: 0, ny: -1 },
+    { ax: f.x + f.w, ay: f.y, bx: f.x + f.w, by: f.y + f.h, nx: 1, ny: 0 },
+    { ax: f.x, ay: f.y + f.h, bx: f.x + f.w, by: f.y + f.h, nx: 0, ny: 1 },
+    { ax: f.x, ay: f.y, bx: f.x, by: f.y + f.h, nx: -1, ny: 0 },
+  ];
+  // 着地点が画面内に収まる辺だけ（画面の端に接している辺からは出られない）
+  let sides = all.filter(d => {
+    const x = (d.ax + d.bx) / 2 + d.nx * off, y = (d.ay + d.by) / 2 + d.ny * off;
+    return x > m && x < L.w - m && y > L.top + 30 * sc && y < L.bottom - 6 * sc;
+  });
+  if (!sides.length) sides = all.filter(d => d.nx === L.gate.nx && d.ny === L.gate.ny);
+  const d = pick(sides), t = rand(0.12, 0.88);
+  const ex = d.ax + (d.bx - d.ax) * t, ey = d.ay + (d.by - d.ay) * t;
+  const pin = clampInside(ex - d.nx * 30 * sc, ey - d.ny * 30 * sc);
+  g.exit = { gate: false, inX: pin.x, inY: pin.y, outX: ex + d.nx * off, outY: ey + d.ny * off };
+}
 function say(g, e, dur = 1.6) { g.bubble = { e, t: 0, dur }; }
 function setState(g, s) { g.state = s; g.stateT = 0; }
 const OUTSIDE_STATES = ['roam', 'eating', 'content', 'pause', 'flee', 'scared', 'lured'];
@@ -515,6 +541,7 @@ function onReturnHome(g) {
   g.escapeT = nextEscape(g);
   setState(g, 'inside');
   g.target = randomInside();
+  if (S.gateOpen && !goats.some(o => isOutside(o) || o.state === 'entering')) setTimeout(() => { if (S.gateOpen) toast('みんな戻った！🚪ゲートをタップして閉めよう', 'good'); }, 900);
 }
 
 function updateGoat(g, dt, rdt) {
@@ -546,27 +573,35 @@ function updateGoat(g, dt, rdt) {
         if (g.idle <= 0) g.target = randomInside();
       }
       // 外に仲間がいるとソワソワして脱走が早まる
-      g.escapeT -= dt * (1 + CONTAGION * outsideN);
+      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (S.gateOpen ? GATE_OPEN_ESC : 1);
       if (outsideN > 0 && !g.bubble && Math.random() < dt * 0.15) say(g, '👀', 1.2);
-      if (g.escapeT <= 0) { setState(g, 'toGate'); g.target = null; say(g, '👀', 1.4); }
+      if (g.escapeT <= 0) { setState(g, 'toGate'); g.target = null; g.exit = null; say(g, '👀', 1.4); }
       break;
     }
     case 'toGate': {
-      const d = steer(g, L.gateIn.x, L.gateIn.y, 46 * s, dt);
-      if (d < 1) { setState(g, 'exiting'); g.exitD0 = dist(g.x, g.y, L.gateOut.x, L.gateOut.y) || 1; g.sqv -= 3; }
+      // ゲートから出るつもりだったのに閉められたら、飛び越えるルートに変更
+      if (!g.exit || (g.exit.gate && !S.gateOpen)) planEscape(g);
+      const d = steer(g, g.exit.inX, g.exit.inY, 46 * s, dt);
+      if (d < 1) {
+        setState(g, 'exiting'); g.exitD0 = dist(g.x, g.y, g.exit.outX, g.exit.outY) || 1;
+        g.sqv -= g.exit.gate ? 3 : 6;
+        if (!g.exit.gate) SFX.escape();
+      }
       break;
     }
     case 'exiting': {
-      const d = steer(g, L.gateOut.x, L.gateOut.y, 75 * s, dt);
+      if (!g.exit) { planEscape(g); g.exitD0 = dist(g.x, g.y, g.exit.outX, g.exit.outY) || 1; }
+      const d = steer(g, g.exit.outX, g.exit.outY, (g.exit.gate ? 75 : 90) * s, dt);
       const p = clamp(1 - d / g.exitD0, 0, 1);
-      g.extraHop = Math.sin(p * Math.PI) * 22 * s;
+      g.extraHop = Math.sin(p * Math.PI) * (g.exit.gate ? 22 : 52) * s;
       if (d < 1) {
-        setState(g, 'roam'); g.eatPlot = -1; g.noCropT = 0; g.outT = 0; g.sqv -= 4;
-        dustPuff(g.x, g.y, 4); emojiPart('💨', g.x - g.dir * 20 * s, g.y - 10 * s, 18 * s);
+        const jumped = !g.exit.gate;
+        setState(g, 'roam'); g.eatPlot = -1; g.noCropT = 0; g.outT = 0; g.sqv -= jumped ? 7 : 4; g.exit = null;
+        dustPuff(g.x, g.y, jumped ? 6 : 4); emojiPart('💨', g.x - g.dir * 20 * s, g.y - 10 * s, 18 * s);
         say(g, pick(['🎶', '😋', '✨']), 1.4);
         SFX.escape();
-        toast(`🐐 ${g.name}が脱走した！畑があぶない！`, 'warn');
-        if (!S.seen.herd) { S.seen.herd = true; setTimeout(() => toast(`ヤギの近くをタップしてゲートへ追い込もう！やさしく戻すと💖+${RETURN_OXY.hand}`, 'good'), 900); }
+        toast(jumped ? `🐐 ${g.name}が柵をピョーンと飛び越えた！畑があぶない！` : `🐐 ${g.name}が開いてたゲートから脱走した！`, 'warn');
+        if (!S.seen.herd) { S.seen.herd = true; setTimeout(() => toast('ゲートをタップして開けてから、ヤギの近くをタップして追い込もう！戻したらゲートを閉めてね', 'good'), 900); }
       }
       break;
     }
@@ -634,7 +669,10 @@ function updateGoat(g, dt, rdt) {
       const sp = g.returnMode === 'food' ? 72 : g.returnMode === 'bell' ? 54 : 38;
       const d = steer(g, L.gateOut.x, L.gateOut.y, sp * s, dt);
       if (g.returnMode === 'food') { g.fxT -= rdt; if (g.fxT <= 0) { g.fxT = 0.5; emojiPart('💗', g.x, g.y - 46 * s, 13 * s, -40); } }
-      if (d < 6 * s) setState(g, 'entering');
+      if (d < 6 * s) {
+        if (S.gateOpen) setState(g, 'entering');
+        else { g.vx = g.vy = 0; if (!g.bubble && Math.random() < dt * 0.6) say(g, '🚪', 1.2); gateClosedHint(); }
+      }
       break;
     }
     case 'entering': {
@@ -671,10 +709,13 @@ function fenceCollide(g) {
   const f = L.fence, pad = 12 * L.sc;
   const herdable = g.state === 'flee' || g.state === 'scared' || g.state === 'lured';
   // ゲートの受け口は広め（狙って押し込めば入る）
-  if (herdable && dist(g.x, g.y, L.gateOut.x, L.gateOut.y) < 48 * L.sc) { startEnter(g); return; }
+  if (herdable && S.gateOpen && dist(g.x, g.y, L.gateOut.x, L.gateOut.y) < 48 * L.sc) { startEnter(g); return; }
   const x0 = f.x - pad, x1 = f.x + f.w + pad, y0 = f.y - pad, y1 = f.y + f.h + pad;
   if (g.x > x0 && g.x < x1 && g.y > y0 && g.y < y1) {
-    if (herdable && dist(g.x, g.y, L.gate.x, L.gate.y) < L.gateW * 1.0) { startEnter(g); return; }
+    if (herdable && dist(g.x, g.y, L.gate.x, L.gate.y) < L.gateW * 1.0) {
+      if (S.gateOpen) { startEnter(g); return; }
+      gateClosedHint();
+    }
     const dl = g.x - x0, dr = x1 - g.x, dtp = g.y - y0, db = y1 - g.y;
     const m = Math.min(dl, dr, dtp, db);
     if (m === dl) { g.x = x0; if (g.vx > 0) g.vx = 0; }
@@ -682,6 +723,19 @@ function fenceCollide(g) {
     else if (m === dtp) { g.y = y0; if (g.vy > 0) g.vy = 0; }
     else { g.y = y1; if (g.vy < 0) g.vy = 0; }
   }
+}
+
+function gateClosedHint() {
+  if (clock - lastGateHintT < 8) return;
+  lastGateHintT = clock;
+  toast('🚪 ゲートが閉まってるよ。ゲートをタップして開けよう');
+}
+const gateHit = (x, y) => dist(x, y, L.gate.x, L.gate.y) < 40 * L.sc;
+function toggleGate() {
+  S.gateOpen = !S.gateOpen;
+  SFX.gate(S.gateOpen);
+  ripple(L.gate.x, L.gate.y, 40 * L.sc, S.gateOpen ? '#ffe066' : '#ffffff');
+  floatText(L.gate.x, L.gate.y - 34 * L.sc, S.gateOpen ? 'ガチャ！ひらいた' : 'パタン！しめた', '#c2447a', 12 * L.sc);
 }
 
 function separateGoats() {
@@ -881,6 +935,7 @@ function ringBell(x, y) {
 //   脱走ヤギの近く → 追い込み
 function autoTarget(x, y) {
   const s = L.sc * 1.1;
+  if (gateHit(x, y)) return { kind: 'gate' };
   const g = goatAt(x, y, 40 * s);
   if (g) {
     if (g.state === 'inside' || g.state === 'toGate') return { kind: 'pet', goat: g };
@@ -896,6 +951,8 @@ function autoTarget(x, y) {
 }
 
 function onTap(x, y) {
+  // ゲートはどのツールでもタップで開け閉め
+  if (gateHit(x, y)) { toggleGate(); return 'gate'; }
   switch (S.tool) {
     case 'auto': {
       const t = autoTarget(x, y);
@@ -1246,9 +1303,53 @@ function drawBubble(g) {
   emoji(b.e, x, y + 1 * s, 17 * s * pop, a);
 }
 
+function drawGateDoor(time) {
+  const g = L.gate, sc = L.sc, gw = L.gateW / 2, OL = '#5b4636';
+  const hx = g.nx === 1 ? g.x : g.x - gw, hy = g.nx === 1 ? g.y - gw : g.y;   // 蝶番
+  const ux = g.nx === 1 ? 0 : 1, uy = g.nx === 1 ? 1 : 0;
+  const th = gateK * 1.75;   // 外向きに約100°開く
+  const dx = ux * Math.cos(th) + g.nx * Math.sin(th), dy = uy * Math.cos(th) + g.ny * Math.sin(th);
+  const len = L.gateW - 4 * sc, t = 9 * sc;
+  ctx.save();
+  ctx.translate(hx, hy); ctx.rotate(Math.atan2(dy, dx));
+  // 閉まっている間に外にヤギがいたら、ドアをふわっと光らせる
+  if (!S.gateOpen && goats.some(isOutside)) {
+    ctx.strokeStyle = `rgba(255,224,102,${0.45 + Math.sin(time * 6) * 0.3})`; ctx.lineWidth = 8 * sc;
+    rr(ctx, 2 * sc, -t / 2 - 3 * sc, len, t + 6 * sc, 6 * sc); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(60,90,40,.22)'; rr(ctx, 4 * sc, -t / 2 + 4 * sc, len - 2 * sc, t, 4 * sc); ctx.fill();
+  ctx.fillStyle = '#ffb3c8'; ctx.strokeStyle = OL; ctx.lineWidth = 2 * sc;
+  rr(ctx, 2 * sc, -t / 2, len, t, 4 * sc); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(91,70,54,.55)'; ctx.lineWidth = 1.5 * sc;
+  for (let i = 1; i < 4; i++) { const x = 2 * sc + len * i / 4; ctx.beginPath(); ctx.moveTo(x, -t / 2 + 1.5 * sc); ctx.lineTo(x, t / 2 - 1.5 * sc); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(255,255,255,.55)'; rr(ctx, 4 * sc, -t / 2 + 1.5 * sc, len - 4 * sc, 2 * sc, 1 * sc); ctx.fill();
+  ctx.fillStyle = '#ffd43b'; ctx.strokeStyle = OL; ctx.lineWidth = 1.5 * sc;
+  ctx.beginPath(); ctx.arc(len - 5 * sc, 0, 3 * sc, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+// 「タップで開ける／閉める」の札（ヤギや畑に隠れないよう最前面に描く）
+function drawGateLabel(time) {
+  const anyOut = goats.some(isOutside);
+  const g = L.gate, sc = L.sc;
+  const label = !S.gateOpen ? (anyOut ? 'タップで開ける' : '') : (anyOut ? '' : 'タップで閉める');
+  if (label) {
+    const lx = g.x + g.nx * 62 * sc, ly = g.y + g.ny * 62 * sc + Math.sin(time * 5) * 2 * sc;
+    ctx.save();
+    ctx.font = `bold ${13 * sc}px ${TEXT_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const w = ctx.measureText(label).width + 18 * sc;
+    ctx.globalAlpha = 0.9 + Math.sin(time * 6) * 0.1;
+    ctx.fillStyle = '#fff6e6'; ctx.strokeStyle = '#c2447a'; ctx.lineWidth = 2 * sc;
+    rr(ctx, lx - w / 2, ly - 12 * sc, w, 24 * sc, 12 * sc); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#c2447a'; ctx.fillText(label, lx, ly + 0.5 * sc);
+    ctx.restore();
+  }
+}
+
 function drawGateHint(time) {
   const anyOut = goats.some(isOutside);
   const g = L.gate, sc = L.sc;
+  if (!S.gateOpen) return;
   const a = anyOut ? 0.55 + Math.sin(time * 6) * 0.3 : 0.18;
   ctx.save();
   ctx.strokeStyle = `rgba(255,120,170,${a})`; ctx.lineWidth = 5 * sc; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -1287,6 +1388,9 @@ function drawCursor(time) {
   } else if (S.tool === 'food') {
     ctx.strokeStyle = 'rgba(255,150,190,.7)'; ctx.lineWidth = 2; ctx.setLineDash([4, 5]);
     ctx.beginPath(); ctx.arc(x, y, 62 * sc, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+  } else if (gateHit(x, y)) {
+    ctx.strokeStyle = 'rgba(255,224,102,.95)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(L.gate.x, L.gate.y, 40 * sc, 0, TAU); ctx.stroke();
   } else if (t && t.kind === 'pet') {
     const g = t.goat, s = sc * 1.1;
     ctx.strokeStyle = 'rgba(255,140,190,.85)'; ctx.lineWidth = 3;
@@ -1348,11 +1452,13 @@ function update(dt, rdt) {
   separateGoats();
   updateParts(rdt);
   S.bellCD = Math.max(0, S.bellCD - dt);
+  gateK += ((S.gateOpen ? 1 : 0) - gateK) * Math.min(1, rdt * 10);
 }
 
 function render(time, rdt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.drawImage(bgCanvas, 0, 0, L.w, L.h);
+  drawGateDoor(time);
   drawGateHint(time);
   for (let i = 0; i < MAX_PLOTS; i++) drawPlotBase(i, time);
   const eaten = {};
@@ -1363,6 +1469,7 @@ function render(time, rdt) {
   list.sort((a, b) => a.y - b.y).forEach(o => o.f());
   drawParts();
   goats.forEach(drawBubble);
+  drawGateLabel(time);
   drawClouds(time, rdt);
   drawCursor(time);
 }
