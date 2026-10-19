@@ -145,6 +145,8 @@ const SFX = {
 // ---------------------------------------------------------
 const xpFor = l => 8 * (l - 1) * l;
 function trustLevel(xp = S.trustXP) { let l = 1; while (l < 10 && xp >= xpFor(l + 1)) l++; return l; }
+// ゲーム内タイマーは S.speed 倍で進むので、表示する残り秒は実時間に直す
+const realSec = t => Math.ceil(t / S.speed);
 
 function addOxy(n, x, y) {
   const before = trustLevel();
@@ -157,6 +159,9 @@ function addOxy(n, x, y) {
     toast(`💖 信頼度 Lv.${after} にアップ！ヤギがもっとなついた！`, 'good');
     SFX.level();
     goats.forEach(g => { sparkles(g.x, g.y - 30 * L.sc, 5); say(g, '💕', 2); });
+  } else if (after < before) {
+    toast(`💔 信頼度が Lv.${after} に下がっちゃった…やさしく戻して取り戻そう`, 'warn');
+    SFX.nope();
   }
 }
 function addSero(n, x, y) {
@@ -724,7 +729,7 @@ function seedAction(i, fromDrag) {
   if (i >= S.plotCount) { if (!fromDrag) { toast('🔒 ショップで畑を広げよう！'); openShop(); } return; }
   const pl = S.plots[i];
   if (!pl.crop && pl.ruin > 0) {
-    if (!fromDrag) { floatText(p.x, p.y - p.s * 0.45, `荒れてる…あと${Math.ceil(pl.ruin / S.speed)}秒`, '#b0774a', 12 * L.sc); SFX.nope(); }
+    if (!fromDrag) { floatText(p.x, p.y - p.s * 0.45, `荒れてる…あと${realSec(pl.ruin)}秒`, '#b0774a', 12 * L.sc); SFX.nope(); }
     return;
   }
   if (!pl.crop) {
@@ -749,7 +754,7 @@ function seedAction(i, fromDrag) {
       SFX.harvest();
       goats.forEach(g => { if (g.eatPlot === i) { g.eatPlot = -1; if (g.state === 'eating') { setState(g, 'roam'); say(g, '😢', 1.2); } } });
     } else if (!fromDrag) {
-      floatText(p.x, p.y - p.s * 0.45, `あと${Math.ceil((cr.grow - pl.t) / (S.fert ? 1.3 : 1))}秒`, '#8b7466', 12 * L.sc);
+      floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / (S.fert ? 1.3 : 1))}秒`, '#8b7466', 12 * L.sc);
     }
   }
 }
@@ -837,7 +842,7 @@ function useFood(x, y) {
     hearts(g.x, g.y - 36 * s, 4); say(g, '😍', 1.6); g.mood = 'happy'; g.moodT = 3; g.sqv -= 3;
     SFX.heart();
   } else if (g.state === 'inside' || g.state === 'toGate') {
-    if (g.feedCD > 0) { say(g, '😋', 1); toast(`${g.name}はおなかいっぱい（あと${Math.ceil(g.feedCD)}秒）`); return; }
+    if (g.feedCD > 0) { say(g, '😋', 1); toast(`${g.name}はおなかいっぱい（あと${realSec(g.feedCD)}秒）`); return; }
     let gain;
     if (S.grassItem > 0) { S.grassItem--; gain = 3; emojiPart('🌿', g.x + g.dir * 20 * s, g.y - 30 * s, 20 * s, -20); }
     else if (S.food > 0) { S.food--; gain = 5; emojiPart('🥣', g.x + g.dir * 20 * s, g.y - 26 * s, 20 * s, -20); }
@@ -853,7 +858,7 @@ function useFood(x, y) {
 
 function ringBell(x, y) {
   if (!S.bell) return;
-  if (S.bellCD > 0) { toast(`🔔 鈴はあと${Math.ceil(S.bellCD)}秒で使えるよ`); SFX.nope(); return; }
+  if (S.bellCD > 0) { toast(`🔔 鈴はあと${realSec(S.bellCD)}秒で使えるよ`); SFX.nope(); return; }
   S.bellCD = BELL_CD;
   ripple(x, y, 220 * L.sc, '#ffe066'); ripple(x, y, 140 * L.sc, '#ffffff');
   parts.push({ type: 'emoji', text: '🔔', x, y: y - 20 * L.sc, vx: 0, vy: -30 * L.sc, g: 0, t: 0, life: 1.2, size: 36 * L.sc, rot: 0, vr: 0, swing: true });
@@ -1420,7 +1425,7 @@ function renderSubrow() {
     const hints = {
       stick: '近くで使うと❗ビックリして2倍速で柵へ！でもムスッ💢として💖が減る',
       food: `脱走ヤギ→自分から柵へ帰る(餌 or 🌱${FOOD_LURE_SERO}) ／ 柵の中→プレゼント　🥣${S.food}　🌿${S.grassItem}`,
-      bell: S.bellCD > 0 ? `🔔 クールダウン中… あと${Math.ceil(S.bellCD)}秒` : 'どこかをタップで鈴を鳴らす → 脱走中のヤギ全員がおうちへ',
+      bell: S.bellCD > 0 ? `🔔 クールダウン中… あと${realSec(S.bellCD)}秒` : 'どこかをタップで鈴を鳴らす → 脱走中のヤギ全員がおうちへ',
     };
     html = `<div class="hint">${hints[S.tool]}</div>`;
   }
