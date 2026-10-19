@@ -44,6 +44,24 @@ const GOAT_COLORS = [
   { body: '#eeeef7', leg: '#dcdcea', accent: '#d9d2ff', collar: '#9b7bff' },
   { body: '#8d7466', leg: '#776055', accent: '#c9a493', collar: '#63e6be' },
 ];
+// ヤギの性格。項目がない倍率は 1（ふつう）
+//   esc: 脱走までの時間  walk: 歩く速さ  rush: 作物へ向かう速さ  eat: 食べ終わるまでの時間
+//   pet/petMax: なでたときの💖と喜ぶ回数  lonely: かまわれないと脱走が早まるまでの秒数
+//   lure: 餌で帰る速さ  flee/fleeT: 逃げる速さと逃げる時間  bonus: 手で戻したときの追加💖  stick: 木の棒の💖減少・拗ね
+const PERSONA = [
+  { label: 'のんびり屋', icon: '🌼', desc: '脱走しにくく、外でもゆっくり歩く', esc: 1.35, walk: 0.7, rush: 0.75,
+    lines: ['ふわぁ〜', 'のんびり〜', 'ぽかぽか〜'] },
+  { label: 'あまえんぼう', icon: '🎀', desc: 'なでると💖+2、5回まで喜ぶ。かまわないとすねて脱走が早まる', pet: 2, petMax: 5, lonely: 45,
+    lines: ['もっとなでて〜', 'すき〜💕', 'えへへ'] },
+  { label: 'くいしんぼう', icon: '🍽️', desc: '熟した作物にまっしぐらで食べるのが速い。餌で釣るとすぐ帰る', rush: 1.4, eat: 0.6, lure: 1.8,
+    lines: ['おなかすいた〜', 'にんじん…', 'もぐもぐしたい'] },
+  { label: 'おてんば', icon: '⚡', desc: 'よく脱走して逃げ足も速い。手で戻すと💖+5', esc: 0.7, flee: 1.3, bonus: 5,
+    lines: ['あそぼ！', 'そと行きたい！', 'かけっこしよ！'] },
+  { label: 'こわがり', icon: '💧', desc: '押すと遠くまで逃げる。木の棒で拗ねると💖が2倍減る', fleeT: 1.6, stick: 2,
+    lines: ['びくっ…', 'やさしくね…', 'こわくない？'] },
+];
+const persona = g => PERSONA[g.ci % PERSONA.length];
+const pv = (g, k) => persona(g)[k] ?? 1;
 const FOOD_PACK_COST = 12, FOOD_LURE_SERO = 8, BELL_CD = 25;
 // 💖報酬：やさしく追い込んで戻すのが一番おいしい。なでるは控えめ＆すぐ満足する
 const RETURN_OXY = { hand: 12, food: 3, bell: 2, self: 1 };
@@ -443,7 +461,7 @@ function makeGoat(def, x, y) {
     escapeT: 0, mood: 'normal', moodT: 0, sulk: 0, bubble: null,
     petCount: 0, petCD: 0, satisfiedT: 0, feedCD: 0, munchT: 0,
     blinkT: rand(1, 4), blink: 0, eatPlot: -1, eatT: 0, fleeT: 0, fleeSpeed: 0,
-    returnMode: null, noCropT: 0, outT: 0, fxT: 0, speedNow: 0, stateT: 0, headTilt: 0, exitD0: 1,
+    returnMode: null, noCropT: 0, outT: 0, fxT: 0, speedNow: 0, stateT: 0, headTilt: 0, exitD0: 1, lonelyT: 0,
   };
 }
 function nextEscape(g) {
@@ -452,6 +470,7 @@ function nextEscape(g) {
   t *= FENCE_MUL[S.fenceLvl];
   t *= 1 + (lvl - 1) * 0.08;
   if (g.sulk > 0) t *= 0.55;
+  t *= pv(g, 'esc');
   t *= 1 + (goats.length - 1) * 0.12;
   return t;
 }
@@ -519,6 +538,7 @@ function onReturnHome(g) {
       const tags = [];
       const sp = SPEED_BONUS.find(b => g.outT < b.t);
       if (sp) { gain += sp.b; tags.push(`${sp.label}+${sp.b}`); }
+      if (persona(g).bonus) { gain += persona(g).bonus; tags.push(`${persona(g).icon}${persona(g).label}+${persona(g).bonus}`); }
       herdCombo = clock - lastHerdT < COMBO_WIN ? herdCombo + 1 : 1;
       lastHerdT = clock;
       if (herdCombo >= 2) { const b = COMBO_OXY * (herdCombo - 1); gain += b; tags.push(`🎉${herdCombo}匹連続+${b}`); SFX.level(); }
@@ -539,6 +559,7 @@ function onReturnHome(g) {
   g.sqv -= 3;
   g.returnMode = null;
   g.escapeT = nextEscape(g);
+  g.lonelyT = 0;
   setState(g, 'inside');
   g.target = randomInside();
   if (S.gateOpen && !goats.some(o => isOutside(o) || o.state === 'entering')) setTimeout(() => { if (S.gateOpen) toast('みんな戻った！🚪ゲートをタップして閉めよう', 'good'); }, 900);
@@ -566,14 +587,17 @@ function updateGoat(g, dt, rdt) {
   switch (g.state) {
     case 'inside': {
       if (g.target) {
-        const d = steer(g, g.target.x, g.target.y, 26 * s, dt);
+        const d = steer(g, g.target.x, g.target.y, 26 * s * pv(g, 'walk'), dt);
         if (d < 1) { g.target = null; g.idle = rand(1, 4); }
       } else {
         g.vx = g.vy = 0; g.idle -= dt;
         if (g.idle <= 0) g.target = randomInside();
       }
       // 外に仲間がいるとソワソワして脱走が早まる
-      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (S.gateOpen ? GATE_OPEN_ESC : 1);
+      // あまえんぼうは、しばらくなでてもらえないとすねて脱走が早まる
+      const lonely = persona(g).lonely && (g.lonelyT += dt) > persona(g).lonely;
+      if (lonely && !g.bubble && Math.random() < dt * 0.12) say(g, '🥺', 1.4);
+      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (S.gateOpen ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1);
       if (outsideN > 0 && !g.bubble && Math.random() < dt * 0.15) say(g, '👀', 1.2);
       if (g.escapeT <= 0) { setState(g, 'toGate'); g.target = null; g.exit = null; say(g, '👀', 1.4); }
       break;
@@ -612,12 +636,12 @@ function updateGoat(g, dt, rdt) {
         const p = L.plots[g.eatPlot];
         const side = g.x < p.x ? -1 : 1;
         const tx = p.x + side * p.s * 0.42, ty = p.y + p.s * 0.18;
-        const d = steer(g, tx, ty, 38 * s, dt);
-        if (d < 2) { setState(g, 'eating'); g.eatT = 2.8; g.dir = -side; }
+        const d = steer(g, tx, ty, 38 * s * pv(g, 'rush'), dt);
+        if (d < 2) { setState(g, 'eating'); g.eatT = 2.8 * pv(g, 'eat'); g.dir = -side; }
       } else {
         g.noCropT += dt;
         if (!g.target) g.target = randomFieldPoint();
-        const d = steer(g, g.target.x, g.target.y, 30 * s, dt);
+        const d = steer(g, g.target.x, g.target.y, 30 * s * pv(g, 'walk'), dt);
         if (d < 2) g.target = null;
         if (g.noCropT > 14) { setState(g, 'lured'); g.returnMode = 'self'; say(g, '😌', 1.5); }
       }
@@ -666,7 +690,7 @@ function updateGoat(g, dt, rdt) {
       break;
     }
     case 'lured': {
-      const sp = g.returnMode === 'food' ? 72 : g.returnMode === 'bell' ? 54 : 38;
+      const sp = g.returnMode === 'food' ? 72 * pv(g, 'lure') : g.returnMode === 'bell' ? 54 : 38 * pv(g, 'walk');
       const d = steer(g, L.gateOut.x, L.gateOut.y, sp * s, dt);
       if (g.returnMode === 'food') { g.fxT -= rdt; if (g.fxT <= 0) { g.fxT = 0.5; emojiPart('💗', g.x, g.y - 46 * s, 13 * s, -40); } }
       if (d < 6 * s) {
@@ -822,15 +846,18 @@ function pet(g) {
   g.petCD = 0.3;
   g.sqv -= 3.2;
   if (g.satisfiedT > 0) { say(g, '☺️', 1); floatText(g.x, g.y - 60 * s, 'まんぞく〜', '#ff8fb8', 12 * s); return; }
-  addOxy(PET_OXY, g.x, g.y - 62 * s);
-  hearts(g.x, g.y - 36 * s, 2);
+  const P = persona(g);
+  g.lonelyT = 0;
+  addOxy(P.pet ?? PET_OXY, g.x, g.y - 62 * s);
+  hearts(g.x, g.y - 36 * s, P.pet ? 3 : 2);
+  if (Math.random() < 0.35) floatText(g.x, g.y - 84 * s, pick(P.lines), '#a0785c', 11 * s);
   say(g, pick(['💖', '☺️', '💕']), 1.2);
   g.mood = 'happy'; g.moodT = 1.4;
   SFX.heart();
   if (g.sulk > 0) g.sulk = Math.max(0, g.sulk - 20);
   if (g.state === 'toGate') { setState(g, 'inside'); g.target = randomInside(); g.escapeT = nextEscape(g) * 0.6; floatText(g.x, g.y - 80 * s, '脱走をやめた！', '#ff5c9a', 12 * s); }
   g.petCount++;
-  if (g.petCount >= PET_MAX) {
+  if (g.petCount >= (P.petMax ?? PET_MAX)) {
     g.petCount = 0; g.satisfiedT = PET_REST; say(g, '✨', 1.8); sparkles(g.x, g.y - 30 * s, 6);
     toast(`🥰 ${g.name}「うっとり…まんぞく〜💕」`, 'good');
   }
@@ -852,14 +879,14 @@ function handPush(x, y, stick) {
     const d = dist(g.x, g.y - 14 * s, x, y);
     if (d > R) return;
     if (isOutside(g)) {
-      startFlee(g, x, y, stick); hit++;
+      startFlee(g, x, y, stick); hit += stick ? pv(g, 'stick') : 1;
     } else if (g.state === 'toGate' && !stick) {
       setState(g, 'inside'); g.target = randomInside(); g.escapeT = nextEscape(g) * 0.5;
       say(g, '💦', 1.2); g.sqv -= 3; addOxy(1, g.x, g.y - 60 * s);
     } else if ((g.state === 'inside' || g.state === 'toGate') && stick) {
-      say(g, '❗', 1.2); g.mood = 'surprise'; g.moodT = 1; g.sqv += 4; g.sulk = 60;
+      say(g, '❗', 1.2); g.mood = 'surprise'; g.moodT = 1; g.sqv += 4; g.sulk = 60 * pv(g, 'stick');
       if (g.state === 'toGate') { setState(g, 'inside'); g.target = randomInside(); g.escapeT = nextEscape(g); }
-      addOxy(-2, g.x, g.y - 60 * s);
+      addOxy(-2 * pv(g, 'stick'), g.x, g.y - 60 * s);
     } else if (g.state === 'inside') {
       g.sqv -= 2; g.target = null; g.idle = 0.6; say(g, '❔', 0.8);
     }
@@ -875,12 +902,12 @@ function startFlee(g, x, y, stick) {
   const b = stick ? 0.7 : clamp(0.04 + lvl * 0.025, 0, 0.3);
   let vx = ax * (1 - b) + gx / gd * b, vy = ay * (1 - b) + gy / gd * b;
   const vl = Math.hypot(vx, vy) || 1;
-  g.fleeSpeed = (stick ? 230 : 115) * s * (1 + lvl * 0.02);
+  g.fleeSpeed = (stick ? 230 : 115) * s * (1 + lvl * 0.02) * pv(g, 'flee');
   g.vx = vx / vl * g.fleeSpeed; g.vy = vy / vl * g.fleeSpeed;
-  g.fleeT = stick ? 1.6 : 1.1 + lvl * 0.04;
+  g.fleeT = stick ? 1.6 : (1.1 + lvl * 0.04) * pv(g, 'fleeT');
   g.eatPlot = -1; g.fxT = 0;
   setState(g, stick ? 'scared' : 'flee');
-  if (stick) { say(g, '❗', 1.2); g.mood = 'surprise'; g.moodT = 1.2; g.sulk = 60; g.sqv += 5; }
+  if (stick) { say(g, '❗', 1.2); g.mood = 'surprise'; g.moodT = 1.2; g.sulk = 60 * pv(g, 'stick'); g.sqv += 5; }
   else { say(g, '💦', 0.9); g.sqv -= 2.5; }
   dustPuff(g.x, g.y, 3);
 }
@@ -1205,8 +1232,9 @@ function drawGoat(g, time) {
   ctx.fillStyle = c.body; ctx.strokeStyle = OL; ctx.lineWidth = 1.8;
   ctx.beginPath(); ctx.ellipse(0, -4, 3.2, 6, 0, 0, TAU); ctx.fill(); ctx.stroke(); ctx.restore();
   // 胴体
+  const look = g.ci % PERSONA.length;   // 0のんびり 1あまえんぼう 2くいしんぼう 3おてんば 4こわがり
   ctx.fillStyle = c.body; ctx.strokeStyle = OL; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.ellipse(0, -21, 20, 12.5, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(0, look === 2 ? -20 : -21, look === 2 ? 22.5 : 20, look === 2 ? 14 : 12.5, 0, 0, TAU); ctx.fill(); ctx.stroke();
   // もこもこ
   ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.beginPath(); ctx.ellipse(-4, -27, 9, 3.6, -0.15, 0, TAU); ctx.fill();
   ctx.strokeStyle = 'rgba(91,70,54,.2)'; ctx.lineWidth = 1.2;
@@ -1217,11 +1245,17 @@ function drawGoat(g, time) {
   ctx.beginPath(); ctx.moveTo(11, -32); ctx.quadraticCurveTo(16, -26, 14, -21); ctx.stroke();
   ctx.fillStyle = '#ffd43b'; ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.arc(15, -21, 2.8, 0, TAU); ctx.fill(); ctx.stroke();
+  // くいしんぼう：よだれかけ
+  if (look === 2) {
+    ctx.fillStyle = '#fff3b0'; ctx.strokeStyle = OL; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(8, -23); ctx.quadraticCurveTo(8, -9, 17, -10); ctx.quadraticCurveTo(22, -16, 19, -23); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff6b81'; ctx.beginPath(); ctx.arc(14.5, -15, 2, 0, TAU); ctx.fill();
+  }
   // 頭
   ctx.save();
   ctx.translate(18, -31);
   ctx.rotate(g.headTilt + Math.sin(time * 2 + g.id) * 0.03);
-  const earW = Math.sin(time * 3 + g.id * 2) * 0.12 + (g.mood === 'sulk' ? 0.5 : 0) + (g.mood === 'surprise' ? -0.5 : 0);
+  const earW = Math.sin(time * 3 + g.id * 2) * 0.12 + (g.mood === 'sulk' ? 0.5 : 0) + (g.mood === 'surprise' ? -0.5 : 0) + (look === 4 ? 0.6 : 0);
   const ear = (x, y, a) => {
     ctx.save(); ctx.translate(x, y); ctx.rotate(a);
     ctx.fillStyle = c.body; ctx.strokeStyle = OL; ctx.lineWidth = 1.8;
@@ -1238,8 +1272,21 @@ function drawGoat(g, time) {
     ctx.beginPath(); ctx.moveTo(x, -7); ctx.quadraticCurveTo(x - 3, -15, x - 8, -15); ctx.stroke();
   };
   horn(-3); horn(2);
+  // おてんば：はためくハチマキのしっぽ（頭の後ろ）
+  if (look === 3) {
+    const fl = Math.sin(time * 9 + g.id) * 2.5 + Math.min(4, g.speedNow / (20 * s));
+    ctx.strokeStyle = OL; ctx.lineWidth = 4.4;
+    ctx.beginPath(); ctx.moveTo(-9, -4); ctx.quadraticCurveTo(-15, -6 + fl, -20, -3 + fl); ctx.moveTo(-9, -4); ctx.quadraticCurveTo(-14, 0 + fl * 0.6, -18, 3 + fl * 0.6); ctx.stroke();
+    ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 2.6;
+    ctx.beginPath(); ctx.moveTo(-9, -4); ctx.quadraticCurveTo(-15, -6 + fl, -20, -3 + fl); ctx.moveTo(-9, -4); ctx.quadraticCurveTo(-14, 0 + fl * 0.6, -18, 3 + fl * 0.6); ctx.stroke();
+  }
   ctx.fillStyle = c.body; ctx.strokeStyle = OL; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.ellipse(0, 0, 10.5, 9.5, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  // おてんば：ハチマキ
+  if (look === 3) {
+    ctx.strokeStyle = OL; ctx.lineWidth = 4.6; ctx.beginPath(); ctx.moveTo(-10, -3); ctx.quadraticCurveTo(0, -8.5, 9, -5.5); ctx.stroke();
+    ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 2.8; ctx.beginPath(); ctx.moveTo(-10, -3); ctx.quadraticCurveTo(0, -8.5, 9, -5.5); ctx.stroke();
+  }
   // 鼻先
   ctx.fillStyle = c.accent; ctx.beginPath(); ctx.ellipse(7, 3.5, 5.6, 4.6, 0, 0, TAU); ctx.fill();
   ctx.strokeStyle = 'rgba(91,70,54,.5)'; ctx.lineWidth = 1.2; ctx.stroke();
@@ -1266,12 +1313,37 @@ function drawGoat(g, time) {
   else {
     ctx.beginPath(); ctx.ellipse(ex, ey, 2.4, 3, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex + 0.8, ey - 1.1, 0.95, 0, TAU); ctx.fill();
+    // のんびり屋：眠そうなまぶた
+    if (look === 0) {
+      ctx.fillStyle = c.body; ctx.beginPath(); ctx.ellipse(ex, ey, 3, 3.6, 0, Math.PI, TAU); ctx.fill();
+      ctx.strokeStyle = OL; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(ex - 2.7, ey + 0.2); ctx.lineTo(ex + 2.7, ey + 0.2); ctx.stroke();
+    }
   }
-  // ほっぺ
-  ctx.fillStyle = 'rgba(255,130,160,.45)'; ctx.beginPath(); ctx.ellipse(1.5, 4.5, 2.8, 1.7, 0, 0, TAU); ctx.fill();
+  // こわがり：困り眉
+  if (look === 4 && g.mood !== 'sulk') {
+    ctx.strokeStyle = '#3b2a22'; ctx.lineWidth = 1.9; ctx.beginPath(); ctx.moveTo(ex - 3, ey - 4.4); ctx.lineTo(ex + 2.6, ey - 6.4); ctx.stroke();
+  }
+  // ほっぺ（あまえんぼうは濃いめ）
+  ctx.fillStyle = look === 1 ? 'rgba(255,110,150,.7)' : 'rgba(255,130,160,.45)';
+  ctx.beginPath(); ctx.ellipse(1.5, 4.5, look === 1 ? 3.4 : 2.8, look === 1 ? 2.1 : 1.7, 0, 0, TAU); ctx.fill();
   // あごひげ
   ctx.fillStyle = c.body; ctx.strokeStyle = OL; ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.moveTo(3, 8); ctx.quadraticCurveTo(4.5, 14, 5.5, 14.5); ctx.quadraticCurveTo(6.5, 12, 7, 8.5); ctx.fill(); ctx.stroke();
+  // のんびり屋：頭の花／あまえんぼう：リボン
+  if (look === 0) {
+    ctx.save(); ctx.translate(-5, -10);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = OL; ctx.lineWidth = 1;
+    for (let i = 0; i < 5; i++) { const a = i * TAU / 5; ctx.beginPath(); ctx.arc(Math.cos(a) * 2.8, Math.sin(a) * 2.8, 2.2, 0, TAU); ctx.fill(); ctx.stroke(); }
+    ctx.fillStyle = '#ffd43b'; ctx.beginPath(); ctx.arc(0, 0, 1.9, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  } else if (look === 1) {
+    ctx.save(); ctx.translate(-6, -9); ctx.rotate(-0.3);
+    ctx.fillStyle = '#ff8fb8'; ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-6, -4); ctx.lineTo(-6, 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(6, -4); ctx.lineTo(6, 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff5c9a'; ctx.beginPath(); ctx.arc(0, 0, 2, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   ctx.restore(); // 頭
   ctx.restore();
 
@@ -1569,7 +1641,7 @@ function shopItems() {
   it.push({ sec: '🎒 誘導アイテム', icon: '🥣', name: '美味しい餌 ×3', desc: `脱走ヤギを呼び戻す／柵の中でプレゼント（所持 ${S.food}）`, cost: FOOD_PACK_COST, cur: 'sero', done: false, buy: () => { S.food += 3; } });
   it.push({ sec: '🎒 誘導アイテム', icon: '🔔', name: '鈴（解放）', desc: `鳴らすと脱走中の全ヤギが帰ってくる（CT ${BELL_CD}秒）`, cost: 120, cur: 'sero', done: S.bell, buy: () => { S.bell = true; S.tool = 'bell'; } });
   const n = goats.length;
-  it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}をお迎え（${n + 1}匹目）` : 'ヤギがいっぱい！', desc: 'なでる相手が増える！ただし脱走ヤギも増えるかも', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
+  it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}（${PERSONA[n].icon}${PERSONA[n].label}）をお迎え` : 'ヤギがいっぱい！', desc: n < MAX_GOATS ? `${n + 1}匹目。${PERSONA[n].desc}` : 'これ以上はお迎えできないよ', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
     buy: () => addGoat() });
   [1, 10].forEach(k => it.push({ sec: '💱 両替（💖→🌱）', icon: '💱', name: `セロトニン ${k}🌱 に両替`, desc: `💖${OXY_PER_SERO * k} を 🌱${k} に交換（信頼Lvは下がらない）`, cost: OXY_PER_SERO * k, cur: 'oxy', done: false,
     buy: () => { addSero(k); toast(`💱 💖${OXY_PER_SERO * k} → 🌱${k} に両替した`, 'good'); } }));
@@ -1637,7 +1709,7 @@ function save() {
 
 // 閉じている間は世界ごと止まる。ヤギも閉じた瞬間の居場所・状態から再開する
 // 位置は画面サイズが変わっても破綻しないよう、柵の中は柵基準・外はプレイエリア基準の比率で持つ
-const GOAT_TIMERS = ['escapeT', 'outT', 'sulk', 'satisfiedT', 'feedCD'];
+const GOAT_TIMERS = ['escapeT', 'outT', 'sulk', 'satisfiedT', 'feedCD', 'lonelyT'];
 function snapGoat(g) {
   const f = L.fence, sn = { st: g.state, dir: g.dir, returnMode: g.returnMode };
   GOAT_TIMERS.forEach(k => { sn[k] = +g[k].toFixed(2); });
