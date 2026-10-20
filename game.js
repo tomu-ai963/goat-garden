@@ -122,6 +122,15 @@ const WEATHER = {
   rainbow: { icon: '🌈', label: 'にじ', dur: [25, 25], bonus: 4, msg: '🌈 にじが出た！いま手で戻すと💖+4' },
 };
 const WEATHER_GAP = [60, 120], RAINBOW_CHANCE = 0.6;
+// 追い込みチャレンジ：選んだ子を🚩の順に通してゲートへ（手だけ）。スコア＝タイム（ゲーム内秒）＋押した回数、小さいほど良い
+//   コースの座標は畑エリアの [u, v]：u はゲートから遠ざかる向き（0=ゲート側 1=奥）、v はそれと直交する向き
+//   rank: ★3 / ★2 になるスコアの上限。★が増えたぶんだけ⭐
+const COURSES = [
+  { id: 'first',  name: 'はじめての旗', start: [0.85, 0.5], flags: [[0.45, 0.3]], rank: [15, 25] },
+  { id: 'zigzag', name: 'ジグザグ',     start: [0.9, 0.15], flags: [[0.7, 0.75], [0.45, 0.25], [0.2, 0.7]], rank: [35, 55] },
+  { id: 'loop',   name: 'ぐるっと一周', start: [0.5, 0.5],  flags: [[0.85, 0.2], [0.85, 0.8], [0.3, 0.85], [0.3, 0.15]], rank: [45, 72] },
+];
+const CHAL_LIMIT = 120, CHAL_R = 34, CHAL_OXY = 5;
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -149,6 +158,7 @@ function defaultState() {
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
     dayT: DAY_LEN * 0.05, weather: { k: 'clear', t: 0, wait: 90 },   // 新しい牧場は朝のうちから
+    chal: {}, chalGoat: 0,   // 追い込みチャレンジの記録 { コースid: { rank, best } } と、走らせる子
   };
 }
 let S = defaultState();
@@ -166,6 +176,7 @@ try {
     if (S.bell === true) S.bellN += 1;
     if (S.fert === true) S.fertN += 1;
     delete S.stick; delete S.bell; delete S.fert; delete S.bellCD;
+    if (!S.chal || typeof S.chal !== 'object') S.chal = {};
     ['stickN', 'bellN', 'fertN', 'fertT', 'food'].forEach(k => { if (!Number.isFinite(S[k]) || S[k] < 0) S[k] = 0; });
     if (!Number.isFinite(S.dayT)) S.dayT = DAY_LEN * 0.05;
     S.dayT = ((S.dayT % DAY_LEN) + DAY_LEN) % DAY_LEN;
@@ -709,7 +720,8 @@ function startEnter(g) {
 
 function onReturnHome(g) {
   const s = L.sc * 1.1, hx = g.x, hy = g.y - 50 * s;
-  switch (g.returnMode) {
+  if (g.chal) finishChallenge(g);   // チャレンジのゴールは、ふだんの帰宅ごほうびの代わりに結果を出す
+  else switch (g.returnMode) {
     case 'hand': {
       let gain = RETURN_OXY.hand;
       const tags = [];
@@ -781,7 +793,7 @@ function updateGoat(g, dt, rdt) {
       if (lonely && !g.bubble && Math.random() < dt * 0.12) say(g, '🥺', 1.4);
       // ときどき好物を思い浮かべる（好物さがしのヒント）
       if (!g.bubble && Math.random() < dt * 0.02) say(g, CROPS[favOf(g)].emoji, 1.4);
-      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (gateLeftOpen() ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1) * envEsc();
+      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (gateLeftOpen() ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1) * envEsc() * (chal ? 0 : 1);   // チャレンジ中はほかの子は脱走しない
       if (isNight() && !g.bubble && Math.random() < dt * 0.08) say(g, '💤', 1.6);
       // 開けっぱなしのゲートが気になってチラチラ見る
       if (gateLeftOpen() && !g.bubble && Math.random() < dt * 0.25) { say(g, '👀', 1.2); g.dir = Math.sign(L.gate.x - g.x) || g.dir; }
@@ -817,6 +829,12 @@ function updateGoat(g, dt, rdt) {
       break;
     }
     case 'roam': {
+      // チャレンジ中の子は作物を食べず、自分からも帰らない。ゆっくりうろうろするだけ
+      if (g.chal) {
+        if (!g.target) g.target = randomFieldPoint();
+        if (steer(g, g.target.x, g.target.y, 22 * s * pv(g, 'walk'), dt) < 2) g.target = null;
+        break;
+      }
       if (g.eatPlot < 0 || !S.plots[g.eatPlot] || !S.plots[g.eatPlot].crop) { g.eatPlot = chooseEatTarget(g); g.target = null; }
       if (g.eatPlot >= 0) {
         g.noCropT = 0;
@@ -858,7 +876,8 @@ function updateGoat(g, dt, rdt) {
     case 'scared': {
       const gx = L.gateOut.x - g.x, gy = L.gateOut.y - g.y, gd = Math.hypot(gx, gy) || 1;
       // 手で押したときのゲート吸い寄せは弱め（押す位置が腕の見せどころ）。棒は強制的に帰る
-      const home = g.state === 'scared' ? 3.6 : 0.12 + lvl * 0.05;
+      // チャレンジで旗が残っている間はゲートに吸い寄せない（押し方だけが勝負）
+      const home = g.state === 'scared' ? 3.6 : g.chal && !chalFlagsDone() ? 0 : 0.12 + lvl * 0.05;
       let vx = g.vx / (g.fleeSpeed || 1), vy = g.vy / (g.fleeSpeed || 1);
       const k = Math.min(1, home * dt);
       vx = vx * (1 - k) + gx / gd * k; vy = vy * (1 - k) + gy / gd * k;
@@ -920,12 +939,15 @@ function fenceCollide(g) {
   const f = L.fence, pad = 12 * L.sc;
   const herdable = g.state === 'flee' || g.state === 'scared' || g.state === 'lured';
   // ゲートの受け口は広め（狙って押し込めば入る）
-  if (herdable && S.gateOpen && dist(g.x, g.y, L.gateOut.x, L.gateOut.y) < 48 * L.sc) { startEnter(g); return; }
+  // チャレンジ中の子は、旗を全部通るまでゲートから入れない
+  const early = g.chal && !chalFlagsDone();
+  if (herdable && S.gateOpen && !early && dist(g.x, g.y, L.gateOut.x, L.gateOut.y) < 48 * L.sc) { startEnter(g); return; }
   const x0 = f.x - pad, x1 = f.x + f.w + pad, y0 = f.y - pad, y1 = f.y + f.h + pad;
   if (g.x > x0 && g.x < x1 && g.y > y0 && g.y < y1) {
     if (herdable && dist(g.x, g.y, L.gate.x, L.gate.y) < L.gateW * 1.0) {
-      if (S.gateOpen) { startEnter(g); return; }
-      gateClosedHint();
+      if (early) chalEarlyHint();
+      else if (S.gateOpen) { startEnter(g); return; }
+      else gateClosedHint();
     }
     const dl = g.x - x0, dr = x1 - g.x, dtp = g.y - y0, db = y1 - g.y;
     const m = Math.min(dl, dr, dtp, db);
@@ -1074,6 +1096,7 @@ function handPush(x, y, stick) {
     if (stick && (isOutside(g) || g.state === 'inside' || g.state === 'toGate')) used = true;
     if (isOutside(g)) {
       startFlee(g, x, y, stick); hit += stick ? pv(g, 'stick') : 1;
+      if (g.chal) chal.pushes++;
     } else if (g.state === 'toGate' && !stick) {
       setState(g, 'inside'); g.target = randomInside(); g.escapeT = nextEscape(g) * 0.5;
       say(g, '💦', 1.2); g.sqv -= 3; addOxy(1, g.x, g.y - 60 * s);
@@ -1094,7 +1117,7 @@ function startFlee(g, x, y, stick) {
   const s = L.sc * 1.1, lvl = trustLevel();
   let ax = g.x - x, ay = g.y - y; const ad = Math.hypot(ax, ay) || 1; ax /= ad; ay /= ad;
   const gx = L.gateOut.x - g.x, gy = L.gateOut.y - g.y, gd = Math.hypot(gx, gy) || 1;
-  const b = stick ? 0.7 : clamp(0.04 + lvl * 0.025, 0, 0.3);
+  const b = stick ? 0.7 : g.chal && !chalFlagsDone() ? 0 : clamp(0.04 + lvl * 0.025, 0, 0.3);
   let vx = ax * (1 - b) + gx / gd * b, vy = ay * (1 - b) + gy / gd * b;
   const vl = Math.hypot(vx, vy) || 1;
   g.fleeSpeed = (stick ? 230 : 115) * s * (1 + lvl * 0.02) * pv(g, 'flee');
@@ -1829,6 +1852,105 @@ function drawEnvBadge(time) {
 }
 
 // ---------------------------------------------------------
+// 追い込みチャレンジ
+// ---------------------------------------------------------
+let chal = null;   // 挑戦中：{ c: コース, g: ヤギ, i: 次の旗, t: 経過秒, pushes: 押した回数 }。保存しない
+let lastChalHintT = -99;
+// コース座標 [u, v] → 画面座標（縦画面はゲートが上・畑が下、横画面はゲートが左・畑が右）
+function coursePt([u, v]) { const f = L.field; return L.portrait ? { x: f.x + v * f.w, y: f.y + u * f.h } : { x: f.x + u * f.w, y: f.y + v * f.h }; }
+const chalFlagsDone = () => !!chal && chal.i >= chal.c.flags.length;
+const chalScore = (t, pushes) => +(t + pushes).toFixed(1);
+const rankOf = (c, score) => score < c.rank[0] ? 3 : score < c.rank[1] ? 2 : 1;
+const starsText = n => '★'.repeat(n) + '☆'.repeat(3 - n);
+const courseOpen = i => i === 0 || !!(S.chal[COURSES[i - 1].id] && S.chal[COURSES[i - 1].id].rank > 0);
+// みんなが柵の中にいるときだけ挑戦できる
+const canStartChallenge = () => !chal && goats.every(g => g.state === 'inside' || g.state === 'toGate');
+function chalEarlyHint() {
+  if (clock - lastChalHintT < 4) return;
+  lastChalHintT = clock;
+  toast(`🚩 先に旗を全部通ろう！（あと${chal.c.flags.length - chal.i}本）`);
+}
+
+function startChallenge(id, ci) {
+  const c = COURSES.find(x => x.id === id), g = goats.find(x => x.ci === ci);
+  if (!c || !g || !canStartChallenge()) return;
+  closeModal('questModal');
+  goats.forEach(o => { if (o.state === 'toGate') { setState(o, 'inside'); o.target = null; } });
+  const p = coursePt(c.start);
+  g.x = p.x; g.y = p.y; g.vx = g.vy = 0; g.exit = null; g.eatPlot = -1; g.target = null; g.outT = 0; g.returnMode = null;
+  g.chal = true; setState(g, 'pause');
+  dustPuff(g.x, g.y, 6); say(g, '🏁', 1.6); g.sqv -= 5;
+  S.tool = 'auto';
+  if (!S.gateOpen) toggleGate();   // ゲートは開けておく（旗を通るまでは入れない）
+  chal = { c, g, i: 0, t: 0, pushes: 0 };
+  lastSub = ''; updateUI();
+  SFX.level();
+  toast(`🏁 ${c.name} スタート！🚩を順番に通してゲートへ（手だけで）`, 'good');
+}
+function updateChallenge(dt) {
+  if (!chal) return;
+  const { c, g } = chal;
+  chal.t += dt;
+  if (!chalFlagsDone()) {
+    const p = coursePt(c.flags[chal.i]);
+    if (dist(g.x, g.y, p.x, p.y) < CHAL_R * L.sc) {
+      chal.i++;
+      SFX.harvest(); buzz(20); sparkles(p.x, p.y - 30 * L.sc, 6);
+      floatText(p.x, p.y - 52 * L.sc, `🚩${chal.i}/${c.flags.length}`, '#ff5c8a', 14 * L.sc);
+      if (chalFlagsDone()) toast('🚩 旗を全部通った！ゲートへ追い込もう', 'good');
+    }
+  }
+  if (chal.t >= CHAL_LIMIT) cancelChallenge('⏱ 時間切れ…また挑戦してね（なにもなくならないよ）');
+}
+function finishChallenge(g) {
+  const { c, t, pushes } = chal, s = L.sc * 1.1;
+  const score = chalScore(t, pushes), rank = rankOf(c, score);
+  const rec = S.chal[c.id] || { rank: 0, best: null };
+  const gain = Math.max(0, rank - rec.rank), best = rec.best === null || score < rec.best;
+  S.chal[c.id] = { rank: Math.max(rank, rec.rank), best: best ? score : rec.best };
+  S.stars += gain;
+  addOxy(CHAL_OXY, g.x, g.y - 50 * s);
+  addBond(g, BOND_GAIN.hand);
+  g.chal = false; chal = null; lastSub = ''; updateUI();
+  hearts(g.x, g.y - 30 * s, 8); sparkles(g.x, g.y - 30 * s, 12);
+  SFX.level(); buzz([30, 60, 30, 60, 60]);
+  toast(`🏁 ゴール！${c.name} ${t.toFixed(1)}秒＋${pushes}回＝${score} → ${starsText(rank)}${gain ? `（⭐+${gain}）` : ''}${best && rec.best !== null ? ' 自己ベスト更新！' : ''}`, 'good');
+}
+function cancelChallenge(msg) {
+  if (!chal) return;
+  const g = chal.g;
+  g.chal = false; chal = null; lastSub = ''; updateUI();
+  // その子は柵の中に戻るだけ（ごほうびも罰もなし）
+  g.x = L.gateIn.x; g.y = L.gateIn.y; g.vx = g.vy = 0; g.returnMode = null; g.eatPlot = -1;
+  setState(g, 'inside'); g.target = randomInside(); g.escapeT = nextEscape(g);
+  dustPuff(g.x, g.y, 4);
+  toast(msg);
+}
+
+// コースの旗（地面に描く。ヤギは手前に重なる）
+function drawCourse(time) {
+  if (!chal) return;
+  const sc = L.sc;
+  chal.c.flags.forEach((f, i) => {
+    const p = coursePt(f), done = i < chal.i, next = i === chal.i;
+    ctx.save();
+    if (next) {
+      ctx.strokeStyle = `rgba(255,92,138,${0.55 + Math.sin(time * 6) * 0.3})`; ctx.lineWidth = 3 * sc; ctx.setLineDash([6 * sc, 5 * sc]);
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, CHAL_R * sc, CHAL_R * sc * 0.45, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.fillStyle = 'rgba(60,90,40,.25)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 2 * sc, 7 * sc, 3 * sc, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#5b4636'; ctx.lineWidth = 3 * sc; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y - 42 * sc); ctx.stroke();
+    const wave = next ? Math.sin(time * 8) * 2 * sc : 0;
+    ctx.fillStyle = done ? '#cfc6be' : next ? '#ff5c8a' : '#ffb3c8'; ctx.lineWidth = 1.5 * sc;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y - 42 * sc); ctx.lineTo(p.x + 24 * sc, p.y - 34 * sc + wave); ctx.lineTo(p.x, p.y - 26 * sc); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${11 * sc}px ${TEXT_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(done ? '✓' : String(i + 1), p.x + 8 * sc, p.y - 34 * sc + wave * 0.5);
+    ctx.restore();
+  });
+}
+
+// ---------------------------------------------------------
 // メインループ
 // ---------------------------------------------------------
 let last = performance.now(), uiTimer = 0, saveTimer = 0;
@@ -1845,6 +1967,7 @@ function frame(now) {
 
 function update(dt, rdt) {
   updateEnv(dt);
+  updateChallenge(dt);
   const growMul = growRate();
   clock += dt;
   outsideN = goats.filter(isOutside).length;
@@ -1880,6 +2003,7 @@ function render(time, rdt) {
   drawGateDoor(time);
   drawGateHint(time);
   for (let i = 0; i < MAX_PLOTS; i++) drawPlotBase(i, time);
+  drawCourse(time);
   const eaten = {};
   goats.forEach(g => { if (g.state === 'eating') eaten[g.eatPlot] = g; });
   const list = [];
@@ -1947,6 +2071,18 @@ function updateUI() {
 }
 
 function renderSubrow() {
+  // チャレンジ中：枠は一度だけ作り、数字だけ書きかえる（やめるボタンを毎回作り直さない）
+  if (chal) {
+    if (lastSub !== 'chal') {
+      lastSub = 'chal';
+      $('subrow').innerHTML = '<div class="hint chal-bar">🏁 <b id="chalName"></b>　🚩<span id="chalFlag"></span>　⏱<span id="chalTime"></span>秒　✋<span id="chalPush"></span>回 <button class="chal-quit" data-chal="quit">やめる</button></div>';
+    }
+    $('chalName').textContent = chal.c.name;
+    $('chalFlag').textContent = `${chal.i}/${chal.c.flags.length}`;
+    $('chalTime').textContent = chal.t.toFixed(1);
+    $('chalPush').textContent = chal.pushes;
+    return;
+  }
   let html;
   if (S.tool === 'auto') {
     html = '<span class="seedlabel">植える種</span>' + CROP_ORDER.filter(k => S.unlockedCrops[k]).map(k =>
@@ -1968,6 +2104,7 @@ function renderSubrow() {
 }
 
 function setTool(t) {
+  if (chal && t !== 'auto') { toast('🏁 チャレンジ中は手（おまかせ）だけで！'); SFX.nope(); return; }
   if ((t === 'stick' || t === 'bell') && itemCount(t) <= 0) { toast(`${ITEM_NAME[t]}を持っていないよ。ショップで🌱${ITEM_COST[t]}`); openShop(); return; }
   S.tool = t; SFX.pop(); updateUI();
 }
@@ -2072,9 +2209,28 @@ function renderQuests() {
       + `<button class="buy star" data-q="${i}">${a ? '替える' : '受ける'}</button></div>`;
   });
   html += '<button class="reroll" data-q="reroll">🔄 ほかの依頼を見る</button><div class="quest-note">⭐はショップの🎀飾り付けで、牧場やヤギを飾るのに使えるよ</div>';
+  html += renderChallengeSection();
   $('questBody').innerHTML = html;
   $('questStars').textContent = S.stars; $('questDone').textContent = S.questsDone;
 }
+// 掲示板の下：追い込みチャレンジ（走らせる子を選んでコースに挑戦）
+function renderChallengeSection() {
+  if (!goats.some(g => g.ci === S.chalGoat)) S.chalGoat = goats[0].ci;
+  const ok = canStartChallenge();
+  let html = '<div class="shop-sec">🏁 追い込みチャレンジ（腕だめし・失敗してもなにもなくならない）</div>'
+    + '<div class="chal-goats"><span class="seedlabel">走る子</span>' + goats.map(g =>
+      `<button class="setbtn ${g.ci === S.chalGoat ? 'on' : ''}" data-q="cgoat:${g.ci}">${persona(g).icon} ${g.name}</button>`).join('') + '</div>';
+  COURSES.forEach((c, i) => {
+    const rec = S.chal[c.id], open = courseOpen(i);
+    const recText = rec && rec.rank ? `${starsText(rec.rank)}　ベスト ${rec.best}` : 'まだ記録なし';
+    html += `<div class="shop-row"><div class="si">🏁</div><div class="sb"><div class="sn">${c.name}（🚩${c.flags.length}本）</div>`
+      + `<div class="sd">${open ? recText : '🔒 前のコースをクリアすると挑戦できる'}　★3は${c.rank[0]}未満</div></div>`
+      + `<button class="buy star" data-q="chal:${c.id}" ${open && ok ? '' : 'disabled'}>挑戦</button></div>`;
+  });
+  html += `<div class="quest-note">${ok ? 'スコア＝タイム（秒）＋押した回数。小さいほど★が増えて、増えたぶん⭐がもらえるよ' : 'みんなが柵の中にいるときに挑戦できるよ'}</div>`;
+  return html;
+}
+
 function openQuests() { renderQuests(); $('questModal').classList.remove('hidden'); paused = true; }
 
 $('questBody').addEventListener('click', e => {
@@ -2086,6 +2242,8 @@ $('questBody').addEventListener('click', e => {
     if (a.k === 'deliver') { returnDelivered(a); return true; }
     return confirm(`今の依頼の進み具合（${a.prog}/${a.n}）はなくなるけど、いい？`);
   };
+  if (v.startsWith('chal:')) { SFX.pop(); startChallenge(v.slice(5), S.chalGoat); return; }
+  if (v.startsWith('cgoat:')) { S.chalGoat = +v.slice(6); SFX.pop(); renderQuests(); return; }
   if (v === 'reroll') { S.quest.offers = []; fillQuests(); }
   else if (v === 'deliver') deliverQuest();
   else if (v === 'quit') { if (!letGo()) return; S.quest.active = null; }
@@ -2228,6 +2386,8 @@ function save() {
 const GOAT_TIMERS = ['escapeT', 'outT', 'sulk', 'satisfiedT', 'feedCD', 'lonelyT'];
 function snapGoat(g) {
   const f = L.fence, sn = { st: g.state, dir: g.dir, returnMode: g.returnMode };
+  // チャレンジは保存しない（閉じたら柵の中から再開）
+  if (g.chal) { GOAT_TIMERS.forEach(k => { sn[k] = 0; }); sn.escapeT = 30; return Object.assign(sn, { st: 'inside', returnMode: null, fx: 0.5, fy: 0.6 }); }
   GOAT_TIMERS.forEach(k => { sn[k] = +g[k].toFixed(2); });
   if (g.state === 'inside' || g.state === 'toGate') { sn.fx = +((g.x - f.x) / f.w).toFixed(4); sn.fy = +((g.y - f.y) / f.h).toFixed(4); }
   else { sn.sx = +(g.x / L.w).toFixed(4); sn.sy = +((g.y - L.top) / (L.bottom - L.top)).toFixed(4); }
@@ -2292,7 +2452,9 @@ $('tools').addEventListener('click', e => {
   if (b.dataset.tool) setTool(b.dataset.tool);
 });
 $('subrow').addEventListener('click', e => {
-  const b = e.target.closest('.seedbtn'); if (!b) return;
+  const b = e.target.closest('.seedbtn');
+  if (e.target.closest('[data-chal]')) { cancelChallenge('🏁 チャレンジをやめた（なにもなくならないよ）'); return; }
+  if (!b) return;
   if (b.dataset.fert) { useFert(); lastSub = ''; renderSubrow(); save(); return; }
   if (b.dataset.snack) S.snack = b.dataset.snack; else S.seed = b.dataset.seed;
   SFX.pop(); lastSub = ''; renderSubrow();
