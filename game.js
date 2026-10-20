@@ -77,6 +77,11 @@ const COMBO_WIN = 5, COMBO_OXY = 5;
 const OXY_PER_SERO = 10;
 // ゲート：開けっぱなしだと柵の中の子がゲートから出ていきやすい（脱走タイマーの進む倍率）
 const GATE_OPEN_ESC = 2.5;
+// 依頼掲示板：QUEST_SLOTS 枚から1つ受ける（期限なし・いつでも替えられる）。達成で⭐ → ショップの飾り付け
+const QUEST_SLOTS = 3;
+const HARVEST_N = { grass: 6, flower: 5, carrot: 4, berry: 3, pumpkin: 2 };
+const SCARF_COST = 2;
+const SCARF_COLORS = ['#5cb85c', '#ff6fa5', '#ff9f43', '#4dabf7', '#9b7bff'];
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -101,6 +106,7 @@ function defaultState() {
     goatDefs: [{ name: GOAT_NAMES[0], c: 0 }],
     speed: 1, tool: 'auto', seed: 'grass', bellCD: 0,
     sound: true, seen: {}, gateOpen: false,
+    stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
   };
 }
 let S = defaultState();
@@ -343,7 +349,9 @@ function buildBg() {
   }
   drawHut(b, sc);
   drawYardProps(b, sc);
+  drawDecos(b, sc);
   drawFence(b, sc);
+  if (S.deco.flags) drawGarland(b, sc);
   // 木（飾り）
   const trees = [];
   for (let i = 0; i < 30 && trees.length < 4; i++) {
@@ -370,7 +378,7 @@ function drawHut(b, sc) {
   b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x + s / 2, y + s + 2 * sc, s * 0.6, 8 * sc, 0, 0, TAU); b.fill();
   b.lineWidth = 2.2 * sc; b.strokeStyle = OL; b.lineJoin = 'round';
   b.fillStyle = '#fff1dc'; rr(b, x + s * 0.08, y + s * 0.38, s * 0.84, s * 0.6, 6 * sc); b.fill(); b.stroke();
-  b.fillStyle = '#ff9aa8'; b.beginPath(); b.moveTo(x - s * 0.04, y + s * 0.45); b.lineTo(x + s / 2, y + s * 0.02); b.lineTo(x + s * 1.04, y + s * 0.45); b.closePath(); b.fill(); b.stroke();
+  b.fillStyle = S.deco.roof ? '#7cc8ff' : '#ff9aa8'; b.beginPath(); b.moveTo(x - s * 0.04, y + s * 0.45); b.lineTo(x + s / 2, y + s * 0.02); b.lineTo(x + s * 1.04, y + s * 0.45); b.closePath(); b.fill(); b.stroke();
   b.fillStyle = 'rgba(255,255,255,.45)'; b.beginPath(); b.moveTo(x + s * 0.18, y + s * 0.38); b.lineTo(x + s / 2, y + s * 0.12); b.lineTo(x + s * 0.55, y + s * 0.18); b.lineTo(x + s * 0.28, y + s * 0.4); b.fill();
   b.fillStyle = '#c58b5a'; b.beginPath(); b.moveTo(x + s * 0.36, y + s * 0.98); b.lineTo(x + s * 0.36, y + s * 0.7); b.arc(x + s / 2, y + s * 0.7, s * 0.14, Math.PI, 0); b.lineTo(x + s * 0.64, y + s * 0.98); b.closePath(); b.fill(); b.stroke();
   b.font = `${12 * sc}px ${EMOJI_FONT}`; b.textAlign = 'center'; b.textBaseline = 'middle'; b.fillText('💗', x + s / 2, y + s * 0.3);
@@ -391,6 +399,47 @@ function drawYardProps(b, sc) {
   b.fillStyle = '#c58b5a'; b.strokeStyle = OL; b.lineWidth = 2 * sc; rr(b, tx - 26 * sc, ty - 8 * sc, 52 * sc, 18 * sc, 6 * sc); b.fill(); b.stroke();
   b.fillStyle = '#8fd8ff'; rr(b, tx - 21 * sc, ty - 5 * sc, 42 * sc, 9 * sc, 4 * sc); b.fill();
   b.fillStyle = 'rgba(255,255,255,.7)'; rr(b, tx - 16 * sc, ty - 4 * sc, 12 * sc, 3 * sc, 2 * sc); b.fill();
+}
+
+// 飾り付け（⭐で交換）：花壇は柵の右下、ベンチは小屋と水飲み場のあいだ
+function drawDecos(b, sc) {
+  const f = L.fence, OL = '#5b4636';
+  if (S.deco.bed) {
+    const x = f.x + f.w - 52 * sc, y = f.y + f.h - 24 * sc;
+    b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x, y + 8 * sc, 34 * sc, 6 * sc, 0, 0, TAU); b.fill();
+    ['#ff8fb8', '#ffd43b', '#ff6b81', '#c49bff', '#ffffff'].forEach((c, i) => {
+      const fx = x + (i - 2) * 11 * sc, fy = y - 10 * sc - (i % 2) * 4 * sc;
+      b.strokeStyle = '#3f8f3a'; b.lineWidth = 1.6 * sc; b.beginPath(); b.moveTo(fx, y - 2 * sc); b.lineTo(fx, fy); b.stroke();
+      b.fillStyle = c; for (let k = 0; k < 5; k++) { const a = k / 5 * TAU; b.beginPath(); b.arc(fx + Math.cos(a) * 2.6 * sc, fy + Math.sin(a) * 2.6 * sc, 2.2 * sc, 0, TAU); b.fill(); }
+      b.fillStyle = '#ffcf4d'; b.beginPath(); b.arc(fx, fy, 1.6 * sc, 0, TAU); b.fill();
+    });
+    b.fillStyle = '#b97c4b'; b.strokeStyle = OL; b.lineWidth = 2 * sc; rr(b, x - 30 * sc, y - 4 * sc, 60 * sc, 12 * sc, 5 * sc); b.fill(); b.stroke();
+  }
+  if (S.deco.bench) {
+    const h = L.hut, x = Math.max(f.x + f.w / 2, h.x + h.s + 40 * sc), y = f.y + 34 * sc;
+    b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x, y + 6 * sc, 26 * sc, 5 * sc, 0, 0, TAU); b.fill();
+    b.strokeStyle = OL; b.lineWidth = 3.5 * sc; b.lineCap = 'round';
+    [-16, 16].forEach(dx => { b.beginPath(); b.moveTo(x + dx * sc, y - 22 * sc); b.lineTo(x + dx * sc, y + 5 * sc); b.stroke(); });
+    b.fillStyle = '#c58b5a'; b.lineWidth = 2 * sc; rr(b, x - 22 * sc, y - 22 * sc, 44 * sc, 7 * sc, 3 * sc); b.fill(); b.stroke();
+    b.fillStyle = '#d9a06a'; rr(b, x - 24 * sc, y - 9 * sc, 48 * sc, 7 * sc, 3 * sc); b.fill(); b.stroke();
+    b.fillStyle = 'rgba(255,255,255,.4)'; rr(b, x - 20 * sc, y - 8 * sc, 30 * sc, 2 * sc, 1 * sc); b.fill();
+  }
+}
+
+// ガーランド：柵の上の辺に、杭から杭へたるませた旗飾り
+function drawGarland(b, sc) {
+  const f = L.fence, cols = ['#ff8fb8', '#ffd43b', '#7fd36b', '#6ec6ff'];
+  const y0 = f.y - 12 * sc, sag = 9 * sc, n = Math.max(1, Math.round(f.w / (64 * sc))), seg = f.w / n;
+  let ci = 0;
+  for (let i = 0; i < n; i++) {
+    const ax = f.x + i * seg, bx = ax + seg;
+    b.strokeStyle = '#8c6b52'; b.lineWidth = 1.4 * sc; b.beginPath(); b.moveTo(ax, y0); b.quadraticCurveTo((ax + bx) / 2, y0 + sag * 2, bx, y0); b.stroke();
+    for (let k = 1; k <= 4; k++) {
+      const t = k / 5, x = ax + seg * t, y = y0 + 4 * sag * t * (1 - t);
+      b.fillStyle = cols[ci++ % cols.length]; b.strokeStyle = '#5b4636'; b.lineWidth = 1 * sc;
+      b.beginPath(); b.moveTo(x - 4 * sc, y); b.lineTo(x + 4 * sc, y); b.lineTo(x, y + 9 * sc); b.closePath(); b.fill(); b.stroke();
+    }
+  }
 }
 
 function drawFence(b, sc) {
@@ -546,6 +595,7 @@ function onReturnHome(g) {
       if (tags.length) floatText(g.x, hy - 22 * s, tags.join(' '), '#ff7a00', 13 * s);
       say(g, '💖', 2); hearts(g.x, g.y - 30 * s, 7); sparkles(g.x, g.y - 30 * s, 6 + tags.length * 4);
       toast(`${g.name}がおうちに帰った！💖 +${gain}${tags.length ? '（' + tags.join(' ') + '）' : ''}`, 'good');
+      questEvent({ type: 'herd', ci: g.ci, fast: sp === SPEED_BONUS[0], combo: herdCombo }, g.x, hy - 44 * s);
       break;
     }
     case 'food': addOxy(RETURN_OXY.food, hx, hy); say(g, '😋', 2); hearts(g.x, g.y - 30 * s, 3); toast(`${g.name}「ごちそうさま〜」`, 'good'); break;
@@ -828,6 +878,7 @@ function seedAction(i, fromDrag) {
     if (pl.t >= cr.grow) {
       addSero(cr.yield, p.x, p.y - p.s * 0.45);
       if (pl.crop === 'grass') { S.grassItem++; floatText(p.x, p.y - p.s * 0.7, '+1🌿', '#4caf50', 12 * L.sc); }
+      questEvent({ type: 'harvest', crop: pl.crop }, p.x, p.y - p.s * 0.9);
       parts.push({ type: 'harvest', text: cr.emoji, x: p.x, y: p.y - p.s * 0.2, vx: 0, vy: -120 * L.sc, g: 0, t: 0, life: 0.8, size: p.s * 0.5, rot: 0, vr: 0 });
       sparkles(p.x, p.y - p.s * 0.2, 5);
       plotFx[i].sqv = -5;
@@ -849,6 +900,7 @@ function pet(g) {
   const P = persona(g);
   g.lonelyT = 0;
   addOxy(P.pet ?? PET_OXY, g.x, g.y - 62 * s);
+  questEvent({ type: 'pet', ci: g.ci }, g.x, g.y - 100 * s);
   hearts(g.x, g.y - 36 * s, P.pet ? 3 : 2);
   if (Math.random() < 0.35) floatText(g.x, g.y - 84 * s, pick(P.lines), '#a0785c', 11 * s);
   say(g, pick(['💖', '☺️', '💕']), 1.2);
@@ -932,6 +984,7 @@ function useFood(x, y) {
     else if (S.food > 0) { S.food--; gain = 5; emojiPart('🥣', g.x + g.dir * 20 * s, g.y - 26 * s, 20 * s, -20); }
     else { toast('牧草🌿（畑で収穫）か餌🥣（ショップ）が必要だよ', 'warn'); SFX.nope(); return; }
     addOxy(gain, g.x, g.y - 62 * s);
+    questEvent({ type: 'feed', ci: g.ci }, g.x, g.y - 100 * s);
     g.feedCD = 12; g.munchT = 1.6; g.sqv -= 3;
     hearts(g.x, g.y - 36 * s, 3); say(g, '😋', 1.6); g.mood = 'happy'; g.moodT = 2;
     if (g.sulk > 0) g.sulk = Math.max(0, g.sulk - 30);
@@ -1240,16 +1293,27 @@ function drawGoat(g, time) {
   ctx.strokeStyle = 'rgba(91,70,54,.2)'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.arc(-8, -18, 3, 0.3, 2.6); ctx.arc(-1, -16, 3, 0.3, 2.6); ctx.stroke();
   leg(-6, sw); leg(13, -sw);
-  // 首輪 + 鈴
-  ctx.strokeStyle = c.collar; ctx.lineWidth = 3.4;
-  ctx.beginPath(); ctx.moveTo(11, -32); ctx.quadraticCurveTo(16, -26, 14, -21); ctx.stroke();
-  ctx.fillStyle = '#ffd43b'; ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.arc(15, -21, 2.8, 0, TAU); ctx.fill(); ctx.stroke();
+  // 首輪 + 鈴（スカーフをもらった子は、よだれかけの上にスカーフ）
+  const scarf = S.deco['scarf' + g.ci];
+  if (!scarf) {
+    ctx.strokeStyle = c.collar; ctx.lineWidth = 3.4;
+    ctx.beginPath(); ctx.moveTo(11, -32); ctx.quadraticCurveTo(16, -26, 14, -21); ctx.stroke();
+    ctx.fillStyle = '#ffd43b'; ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(15, -21, 2.8, 0, TAU); ctx.fill(); ctx.stroke();
+  }
   // くいしんぼう：よだれかけ
   if (look === 2) {
     ctx.fillStyle = '#fff3b0'; ctx.strokeStyle = OL; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(8, -23); ctx.quadraticCurveTo(8, -9, 17, -10); ctx.quadraticCurveTo(22, -16, 19, -23); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#ff6b81'; ctx.beginPath(); ctx.arc(14.5, -15, 2, 0, TAU); ctx.fill();
+  }
+  if (scarf) {
+    ctx.fillStyle = SCARF_COLORS[g.ci % SCARF_COLORS.length]; ctx.strokeStyle = OL; ctx.lineWidth = 1.4;
+    // 頭に隠れないよう、首の付け根に巻いて胸元へ三角を垂らす
+    ctx.beginPath(); ctx.moveTo(10, -19); ctx.lineTo(21, -18); ctx.lineTo(14.5, -7); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(5, -27); ctx.quadraticCurveTo(14, -20, 23, -24); ctx.lineTo(23.5, -18.5); ctx.quadraticCurveTo(14, -14, 5.5, -21.5); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    [[13, -14], [17, -15], [14.6, -10.5], [10, -21], [18, -19.5]].forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 1.1, 0, TAU); ctx.fill(); });
   }
   // 頭
   ctx.save();
@@ -1586,6 +1650,9 @@ function updateUI() {
     b.classList.toggle('locked', (t === 'stick' && !S.stick) || (t === 'bell' && !S.bell));
   });
   $('foodBadge').textContent = S.food;
+  const qa = S.quest && S.quest.active, qb = $('questBadge');
+  qb.textContent = qa ? `${qa.prog}/${qa.n}` : '!';
+  qb.classList.toggle('idle', !qa);
   const cd = $('bellCd');
   cd.classList.toggle('on', S.bell && S.bellCD > 0);
   cd.textContent = S.bellCD > 0 ? Math.ceil(S.bellCD) : '';
@@ -1595,7 +1662,7 @@ function updateUI() {
   sb.classList.toggle('fast', S.speed === 2);
   $('soundBtn').textContent = S.sound ? '🔊' : '🔇';
   renderSubrow();
-  if (!$('shopModal').classList.contains('hidden')) { $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy); }
+  if (!$('shopModal').classList.contains('hidden')) { $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy); $('shopStars').textContent = S.stars; }
 }
 
 function renderSubrow() {
@@ -1621,9 +1688,109 @@ function setTool(t) {
 }
 
 // ---------------------------------------------------------
+// 依頼掲示板
+// ---------------------------------------------------------
+// make: 内容を決める（n=必要回数, stars=ごほうび）  on: そのできごとで1つ進むか  need: 出せる条件
+const goatName = ci => GOAT_NAMES[ci % GOAT_NAMES.length];
+const QUESTS = {
+  harvest:  { icon: q => CROPS[q.crop].emoji, make: q => { q.crop = pick(CROP_ORDER.filter(k => S.unlockedCrops[k])); q.n = HARVEST_N[q.crop]; q.stars = q.crop === 'grass' || q.crop === 'flower' ? 1 : 2; },
+              text: q => `${CROPS[q.crop].name}を${q.n}回収穫する`, on: (q, e) => e.type === 'harvest' && e.crop === q.crop },
+  pet:      { icon: () => '🥰', make: q => { q.ci = pick(goats).ci; q.n = 3; q.stars = 1; },
+              text: q => `${goatName(q.ci)}を${q.n}回なでる`, on: (q, e) => e.type === 'pet' && e.ci === q.ci },
+  feed:     { icon: () => '🌿', make: q => { q.ci = pick(goats).ci; q.n = 2; q.stars = 1; },
+              text: q => `柵の中の${goatName(q.ci)}に🌿か🥣を${q.n}回あげる`, on: (q, e) => e.type === 'feed' && e.ci === q.ci },
+  herd:     { icon: () => '✋', make: q => { q.n = 2; q.stars = 2; },
+              text: q => `脱走した子を手で${q.n}回追い込んで戻す`, on: (q, e) => e.type === 'herd' },
+  herdGoat: { icon: () => '🐐', make: q => { q.ci = pick(goats).ci; q.n = 1; q.stars = 2; },
+              text: q => `脱走した${goatName(q.ci)}を手で追い込んで戻す`, on: (q, e) => e.type === 'herd' && e.ci === q.ci },
+  fast:     { icon: () => '⚡', make: q => { q.n = 1; q.stars = 2; },
+              text: () => `脱走から${SPEED_BONUS[0].t}秒以内に手で戻す（⚡はやい！）`, on: (q, e) => e.type === 'herd' && e.fast },
+  combo:    { icon: () => '🎉', make: q => { q.n = 1; q.stars = 3; }, need: () => goats.length >= 2,
+              text: () => '🎉2匹連続で手で戻す', on: (q, e) => e.type === 'herd' && e.combo >= 2 },
+};
+function makeQuest(avoid) {
+  const ok = Object.keys(QUESTS).filter(k => !QUESTS[k].need || QUESTS[k].need());
+  const pool = ok.filter(k => !avoid.includes(k));
+  const q = { k: pick(pool.length ? pool : ok) };
+  QUESTS[q.k].make(q);
+  return q;
+}
+const questKindsInUse = () => [...S.quest.offers, S.quest.active].filter(Boolean).map(q => q.k);
+function validQuest(q) {
+  const d = q && QUESTS[q.k];
+  return !!d && (!d.need || d.need()) && q.n > 0 && q.stars > 0
+    && (q.ci === undefined || goats.some(g => g.ci === q.ci)) && (q.crop === undefined || !!S.unlockedCrops[q.crop]);
+}
+// 掲示板を3枚にそろえる（壊れたセーブの依頼は捨てる）
+function fillQuests() {
+  if (!S.quest || !Array.isArray(S.quest.offers)) S.quest = { offers: [], active: null };
+  S.quest.offers = S.quest.offers.filter(validQuest).slice(0, QUEST_SLOTS);
+  if (S.quest.active && !validQuest(S.quest.active)) S.quest.active = null;
+  if (S.quest.active) S.quest.active.prog = Math.max(0, S.quest.active.prog | 0);
+  while (S.quest.offers.length < QUEST_SLOTS) S.quest.offers.push(makeQuest(questKindsInUse()));
+}
+function questEvent(e, x, y) {
+  const q = S.quest.active;
+  if (!q || !QUESTS[q.k].on(q, e)) return;
+  q.prog++;
+  floatText(x, y, `📋${Math.min(q.prog, q.n)}/${q.n}`, '#7a5af8', 12 * L.sc);
+  if (q.prog < q.n) return;
+  S.stars += q.stars; S.questsDone++;
+  S.quest.active = null;
+  SFX.level();
+  toast(`📋 依頼達成！⭐+${q.stars}（${QUESTS[q.k].text(q)}）`, 'good');
+  if (!S.seen.star) { S.seen.star = true; setTimeout(() => toast('⭐はショップの🎀飾り付けで使えるよ', 'good'), 1200); }
+}
+
+function renderQuests() {
+  const a = S.quest.active;
+  let html = '<div class="shop-sec">受けている依頼</div>';
+  if (a) {
+    html += `<div class="shop-row quest-now"><div class="si">${QUESTS[a.k].icon(a)}</div><div class="sb"><div class="sn">${QUESTS[a.k].text(a)}</div>`
+      + `<div class="qbar"><i style="width:${Math.min(100, a.prog / a.n * 100)}%"></i></div><div class="sd">${a.prog}/${a.n}　ごほうび ⭐${a.stars}</div></div>`
+      + '<button class="buy danger" data-q="quit">やめる</button></div>';
+  } else html += '<div class="quest-empty">下からひとつ選んで受けよう（期限なし・いつでも替えられるよ）</div>';
+  html += '<div class="shop-sec">依頼をえらぶ</div>';
+  S.quest.offers.forEach((q, i) => {
+    html += `<div class="shop-row"><div class="si">${QUESTS[q.k].icon(q)}</div><div class="sb"><div class="sn">${QUESTS[q.k].text(q)}</div><div class="sd">ごほうび ⭐${q.stars}</div></div>`
+      + `<button class="buy star" data-q="${i}">${a ? '替える' : '受ける'}</button></div>`;
+  });
+  html += '<button class="reroll" data-q="reroll">🔄 ほかの依頼を見る</button><div class="quest-note">⭐はショップの🎀飾り付けで、牧場やヤギを飾るのに使えるよ</div>';
+  $('questBody').innerHTML = html;
+  $('questStars').textContent = S.stars; $('questDone').textContent = S.questsDone;
+}
+function openQuests() { renderQuests(); $('questModal').classList.remove('hidden'); paused = true; }
+
+$('questBody').addEventListener('click', e => {
+  const b = e.target.closest('button[data-q]'); if (!b) return;
+  const v = b.dataset.q, a = S.quest.active;
+  // 進み具合があるときだけ確認する（替える・やめる自体に罰はない）
+  const letGo = () => !a || a.prog === 0 || confirm(`今の依頼の進み具合（${a.prog}/${a.n}）はなくなるけど、いい？`);
+  if (v === 'reroll') { S.quest.offers = []; fillQuests(); }
+  else if (v === 'quit') { if (!letGo()) return; S.quest.active = null; }
+  else {
+    const i = +v, q = S.quest.offers[i];
+    if (!q || !letGo()) return;
+    S.quest.active = { ...q, prog: 0 };
+    S.quest.offers[i] = makeQuest(questKindsInUse());
+    toast(`📋 依頼を受けた：${QUESTS[q.k].text(q)}`, 'good');
+  }
+  SFX.pop(); renderQuests(); updateUI(); save();
+});
+
+// ---------------------------------------------------------
 // ショップ
 // ---------------------------------------------------------
 const STICK_ICON = $('tools').querySelector('[data-tool="stick"] .ti').innerHTML;
+const BENCH_ICON = '<svg viewBox="0 0 32 32" width="28" height="28"><path d="M8 9v19M24 9v19" stroke="#5b4636" stroke-width="3" stroke-linecap="round"/><rect x="5" y="8" width="22" height="6" rx="2" fill="#c58b5a" stroke="#5b4636" stroke-width="1.5"/><rect x="4" y="17" width="24" height="5" rx="2" fill="#d9a06a" stroke="#5b4636" stroke-width="1.5"/></svg>';
+const DECOS = [
+  { k: 'bed',   icon: '🌷',       name: '花壇',               desc: '柵の中に花壇ができる', cost: 3 },
+  { k: 'bench', icon: BENCH_ICON, name: 'ベンチ',             desc: '柵の中にひと休みできるベンチを置く', cost: 4 },
+  { k: 'roof',  icon: '🏠',       name: '小屋の屋根の塗り替え', desc: '小屋の屋根をピンクから空色に', cost: 4 },
+  { k: 'flags', icon: '🎏',       name: 'ガーランド',          desc: '柵の上に旗飾りをつける', cost: 5 },
+];
+const CUR_ICON = { sero: '🌱', oxy: '💖', star: '⭐' };
+const wallet = cur => cur === 'sero' ? S.sero : cur === 'oxy' ? S.oxy : S.stars;
 function shopItems() {
   const it = [];
   CROP_ORDER.slice(1).forEach(k => {
@@ -1643,6 +1810,11 @@ function shopItems() {
   const n = goats.length;
   it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}（${PERSONA[n].icon}${PERSONA[n].label}）をお迎え` : 'ヤギがいっぱい！', desc: n < MAX_GOATS ? `${n + 1}匹目。${PERSONA[n].desc}` : 'これ以上はお迎えできないよ', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
     buy: () => addGoat() });
+  const DSEC = '🎀 飾り付け（📋依頼の⭐で交換）';
+  DECOS.forEach(d => it.push({ sec: DSEC, icon: d.icon, name: d.name, desc: d.desc, cost: d.cost, cur: 'star', done: !!S.deco[d.k],
+    buy: () => { S.deco[d.k] = true; buildBg(); toast(`🎀 ${d.name}を飾った！`, 'good'); } }));
+  goats.forEach(g => it.push({ sec: DSEC, icon: '🧣', name: `${g.name}のスカーフ`, desc: '首輪のかわりに、おそろいのスカーフを巻いてあげる', cost: SCARF_COST, cur: 'star', done: !!S.deco['scarf' + g.ci],
+    buy: () => { S.deco['scarf' + g.ci] = true; say(g, '💕', 2); sparkles(g.x, g.y - 30 * L.sc, 6); toast(`🧣 ${g.name}「にあう？えへへ」`, 'good'); } }));
   [1, 10].forEach(k => it.push({ sec: '💱 両替（💖→🌱）', icon: '💱', name: `セロトニン ${k}🌱 に両替`, desc: `💖${OXY_PER_SERO * k} を 🌱${k} に交換（信頼Lvは下がらない）`, cost: OXY_PER_SERO * k, cur: 'oxy', done: false,
     buy: () => { addSero(k); toast(`💱 💖${OXY_PER_SERO * k} → 🌱${k} に両替した`, 'good'); } }));
   it.push({ sec: '⚙️ その他', icon: '🗑️', name: 'データをリセット', desc: '最初からやり直す', cost: 0, cur: 'reset', done: false, buy: () => {} });
@@ -1657,17 +1829,15 @@ function renderShop() {
     let btn;
     if (it.cur === 'reset') btn = `<button class="buy danger" data-i="${i}">リセット</button>`;
     else if (it.done) btn = `<button class="buy done" disabled>✔ 済み</button>`;
-    else {
-      const have = it.cur === 'sero' ? S.sero : S.oxy;
-      btn = `<button class="buy ${it.cur === 'oxy' ? 'oxy' : ''}" data-i="${i}" ${have < it.cost ? 'disabled' : ''}>${it.cur === 'sero' ? '🌱' : '💖'} ${it.cost}</button>`;
-    }
+    else btn = `<button class="buy ${it.cur === 'sero' ? '' : it.cur}" data-i="${i}" ${wallet(it.cur) < it.cost ? 'disabled' : ''}>${CUR_ICON[it.cur]} ${it.cost}</button>`;
     html += `<div class="shop-row"><div class="si">${it.icon}</div><div class="sb"><div class="sn">${it.name}</div><div class="sd">${it.desc}</div></div>${btn}</div>`;
   });
   $('shopList').innerHTML = html;
-  $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy);
+  $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy); $('shopStars').textContent = S.stars;
 }
 function openShop() { renderShop(); $('shopModal').classList.remove('hidden'); paused = true; }
-function closeModal(id) { $(id).classList.add('hidden'); paused = !$('shopModal').classList.contains('hidden') || !$('helpModal').classList.contains('hidden'); }
+const MODALS = ['shopModal', 'helpModal', 'questModal'];
+function closeModal(id) { $(id).classList.add('hidden'); paused = MODALS.some(m => !$(m).classList.contains('hidden')); }
 
 $('shopList').addEventListener('click', e => {
   const b = e.target.closest('button[data-i]'); if (!b) return;
@@ -1677,8 +1847,10 @@ $('shopList').addEventListener('click', e => {
     return;
   }
   if (it.done) return;
-  if (it.cur === 'sero') { if (S.sero < it.cost) return; S.sero -= it.cost; bumpGauge('seroGauge'); }
-  else { if (S.oxy < it.cost) return; S.oxy -= it.cost; bumpGauge('oxyGauge'); }
+  if (wallet(it.cur) < it.cost) return;
+  if (it.cur === 'sero') { S.sero -= it.cost; bumpGauge('seroGauge'); }
+  else if (it.cur === 'oxy') { S.oxy -= it.cost; bumpGauge('oxyGauge'); }
+  else S.stars -= it.cost;
   it.buy();
   SFX.buy();
   renderShop(); updateUI(); save();
@@ -1772,6 +1944,7 @@ $('tools').addEventListener('click', e => {
   ensureAudio();
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'shopBtn') { SFX.pop(); openShop(); return; }
+  if (b.id === 'questBtn') { SFX.pop(); openQuests(); return; }
   if (b.dataset.tool) setTool(b.dataset.tool);
 });
 $('subrow').addEventListener('click', e => {
@@ -1788,8 +1961,9 @@ document.querySelectorAll('.modal').forEach(m => m.addEventListener('pointerdown
 window.addEventListener('keydown', e => {
   if (e.key >= '1' && e.key <= String(TOOLS.length)) setTool(TOOLS[+e.key - 1]);
   else if (e.key === ' ') { e.preventDefault(); $('speedBtn').click(); }
-  else if (e.key === 'Escape') { closeModal('shopModal'); closeModal('helpModal'); }
+  else if (e.key === 'Escape') MODALS.forEach(closeModal);
   else if (e.key === 's' || e.key === 'S') { if ($('shopModal').classList.contains('hidden')) openShop(); else closeModal('shopModal'); }
+  else if (e.key === 'q' || e.key === 'Q') { if ($('questModal').classList.contains('hidden')) openQuests(); else closeModal('questModal'); }
 });
 window.addEventListener('resize', () => { resize(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) save(); last = performance.now(); });
@@ -1808,6 +1982,8 @@ S.goatDefs.forEach((d, i) => {
   else g.escapeT = (isNewGame && i === 0) ? 14 : nextEscape(g) * 0.6 + i * 5;
   goats.push(g);
 });
+fillQuests();
+updateUI();
 if (isNewGame) { $('helpModal').classList.remove('hidden'); paused = true; }
 else {
   const out = goats.filter(isOutside);

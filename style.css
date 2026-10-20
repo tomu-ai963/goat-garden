@@ -108,6 +108,9 @@ button { font-family: inherit; }
 }
 .tool .cd.on { display: grid; }
 .tool.shop { background: linear-gradient(#e2f5ff, #9fd8ff); color: #1f4f70; }
+.tool.quest { background: linear-gradient(#f1ebff, #cdb8ff); color: #45307a; }
+.tool .badge.idle { background: #7a5af8; animation: nudge 1.6s ease-in-out infinite; }
+@keyframes nudge { 0%,70%,100% { transform: scale(1); } 80% { transform: scale(1.25); } 90% { transform: scale(.95); } }
 
 /* ===== Toasts ===== */
 #toasts {
@@ -160,6 +163,17 @@ button { font-family: inherit; }
 .buy:disabled { background: #eee5dd; color: #b3a397; box-shadow: none; cursor: default; }
 .buy.done { background: #fff2c4; color: #a07800; box-shadow: none; }
 .buy.danger { background: #ffe3e3; color: #c0392b; box-shadow: none; }
+.buy.star { background: linear-gradient(#efe6ff, #b89cff); color: #3d2470; box-shadow: 0 3px 0 #8c6ee0; }
+.quest-now { border-color: #cdb8ff; background: #faf7ff; }
+.qbar { height: 8px; background: #eee6fb; border-radius: 99px; overflow: hidden; margin: 4px 0 2px; }
+.qbar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #cdb8ff, #7a5af8); }
+.quest-empty { background: #fff; border: 2px dashed #e2d6fb; border-radius: 16px; padding: 10px; font-size: 12.5px; color: #8b7466; text-align: center; }
+.reroll {
+  display: block; margin: 8px auto 4px; border: 2px solid #e2d6fb; background: #fff; color: #5a3fa8;
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: bold; cursor: pointer;
+}
+.reroll:active { transform: translateY(2px); }
+.quest-note { font-size: 11.5px; color: #8b7466; text-align: center; }
 .buy:not(:disabled):active { transform: translateY(2px); box-shadow: none; }
 
 .help p { font-size: 13.5px; line-height: 1.6; margin: 6px 0; }
