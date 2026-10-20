@@ -82,6 +82,24 @@ const QUEST_SLOTS = 3;
 const HARVEST_N = { grass: 6, flower: 5, carrot: 4, berry: 3, pumpkin: 2 };
 const SCARF_COST = 2;
 const SCARF_COLORS = ['#5cb85c', '#ff6fa5', '#ff9f43', '#4dabf7', '#9b7bff'];
+// なかよし度：ヤギごとの絆。上がるたびに思い出（MEMORIES）が1つ増えて⭐+1
+// 好物（GOAT_NAMES と同じ並び）は、柵の中でおやつとしてあげると見つかる。脱走中はその畑を狙いやすい
+const FAVORITE = ['flower', 'berry', 'carrot', 'pumpkin', 'grass'];
+const BOND_XP = [0, 8, 25, 50, 90, 140];   // なかよしLv.0〜5 に必要な累計
+const BOND_GAIN = { pet: 1, feed: 2, fav: 5, hand: 3, home: 1 };
+const FAV_OXY = 5;   // 好物をあげたときに上乗せする💖
+const MEMORIES = [
+  ['ひなたでいっしょにうとうとした。メイの寝息は「ぷぅ」', 'お花のにおいをかいで、しあわせそうに目を細めていた', 'わたしの足もとを枕にして、お昼寝をはじめた',
+   '脱走の途中なのに、立ち止まって雲をながめていた', 'はじめて自分から「めぇ」と呼びに来てくれた'],
+  ['なでる手を止めると、鼻でつんつん催促された', 'ずっと後ろをついてくる。ふり向くと、うれしそうにしっぽをふった', '名前を呼ぶと、遠くからでも走ってくるようになった',
+   'ほかの子をなでていたら、間にぐいっと割りこんできた', '「いちばんすき」ってユキの顔に書いてある気がした'],
+  ['おやつの音だけで、柵のすみからとんできた', 'もぐもぐしながら、もう次のおやつを見つめていた', '畑仕事をじっと見守っている。…たぶん収穫待ち',
+   'はじめて、おやつをほかの子にゆずっていた', '何も持っていないのに、そばに来てすり寄ってくれた'],
+  ['かけっこを挑まれた。もちろん負けた', '柵を飛び越えたあと、「見てた？」という顔でふり返った', '追い込まれるのも、遊びのひとつだと思っているみたい',
+   '走りつかれて、わたしの横にどさっと寝ころんだ', 'ゲートの前で、わたしが来るのを待っていてくれた'],
+  ['遠くから、こっそりこっちを見ていた', 'そーっと手を出したら、においをかいでくれた', 'はじめて、自分から近くに寄ってきてくれた',
+   '大きな音にびっくりしたとき、わたしの後ろにかくれた', 'もう、なでても耳がぺたんとしない。安心してくれている'],
+];
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -107,6 +125,7 @@ function defaultState() {
     speed: 1, tool: 'auto', seed: 'grass', bellCD: 0,
     sound: true, seen: {}, gateOpen: false,
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
+    snacks: {}, snack: 'grass', bond: {}, favFound: {},
   };
 }
 let S = defaultState();
@@ -118,6 +137,8 @@ try {
     while (S.plots.length < MAX_PLOTS) S.plots.push({ crop: null, t: 0, ruin: 0 });
     S.plots.forEach(p => { if (!(p.ruin > 0)) p.ruin = 0; });
     if (!TOOLS.includes(S.tool)) S.tool = 'auto';   // 旧セーブの seed/pet/hand → おまかせ
+    ['snacks', 'bond', 'favFound'].forEach(k => { if (!S[k] || typeof S[k] !== 'object') S[k] = {}; });
+    if (S.snack !== 'food' && !S.unlockedCrops[S.snack]) S.snack = 'grass';
     isNewGame = false;
   }
 } catch (e) { /* ignore */ }
@@ -194,6 +215,28 @@ function addOxy(n, x, y) {
     SFX.nope();
   }
 }
+// なかよし度は下がらない（木の棒の罰は💖のほう）
+const favOf = g => FAVORITE[g.ci % FAVORITE.length];
+function bondLevel(ci) { const x = S.bond[ci] || 0; let l = 0; while (l < BOND_XP.length - 1 && x >= BOND_XP[l + 1]) l++; return l; }
+function addBond(g, n) {
+  const before = bondLevel(g.ci);
+  S.bond[g.ci] = (S.bond[g.ci] || 0) + n;
+  const after = bondLevel(g.ci);
+  if (after <= before) return;
+  S.stars += after - before;
+  SFX.level();
+  hearts(g.x, g.y - 34 * L.sc, 8); sparkles(g.x, g.y - 30 * L.sc, 8);
+  toast(`📖 ${g.name}となかよしLv.${after}！思い出が増えた（⭐+${after - before}）`, 'good');
+  if (!S.seen.album) { S.seen.album = true; setTimeout(() => toast('思い出は右上の📖なかよし帳で見られるよ', 'good'), 1400); }
+}
+
+// おやつ：牧草🌿と餌🥣のほか、収穫した作物も1つずつ取っておける
+const snackEmoji = k => k === 'food' ? '🥣' : CROPS[k].emoji;
+const snackName = k => k === 'food' ? '美味しい餌' : CROPS[k].name;
+const snackKinds = () => [...CROP_ORDER.filter(k => S.unlockedCrops[k]), 'food'];
+const snackCount = k => k === 'grass' ? S.grassItem : k === 'food' ? S.food : (S.snacks[k] || 0);
+function takeSnack(k) { if (k === 'grass') S.grassItem--; else if (k === 'food') S.food--; else S.snacks[k]--; }
+
 function addSero(n, x, y) {
   S.sero = Math.max(0, S.sero + n);
   if (x !== undefined && n !== 0) floatText(x, y, (n > 0 ? '+' : '') + n + '🌱', n > 0 ? '#2fae5a' : '#b0774a');
@@ -566,7 +609,8 @@ function chooseEatTarget(g) {
     if (goats.some(o => o !== g && o.eatPlot === i && isOutside(o))) continue;
     const p = L.plots[i];
     const ready = pl.t >= CROPS[pl.crop].grow;
-    const score = dist(g.x, g.y, p.x, p.y) - (ready ? 200 * L.sc : 0) - (pl.t / CROPS[pl.crop].grow) * 60 * L.sc;
+    const score = dist(g.x, g.y, p.x, p.y) - (ready ? 200 * L.sc : 0) - (pl.t / CROPS[pl.crop].grow) * 60 * L.sc
+      - (pl.crop === favOf(g) ? 150 * L.sc : 0);   // 好物の畑を狙いやすい（好物さがしのヒント）
     if (score < bestScore) { bestScore = score; best = i; }
   }
   return best;
@@ -596,11 +640,12 @@ function onReturnHome(g) {
       say(g, '💖', 2); hearts(g.x, g.y - 30 * s, 7); sparkles(g.x, g.y - 30 * s, 6 + tags.length * 4);
       toast(`${g.name}がおうちに帰った！💖 +${gain}${tags.length ? '（' + tags.join(' ') + '）' : ''}`, 'good');
       questEvent({ type: 'herd', ci: g.ci, fast: sp === SPEED_BONUS[0], combo: herdCombo }, g.x, hy - 44 * s);
+      addBond(g, BOND_GAIN.hand);
       break;
     }
-    case 'food': addOxy(RETURN_OXY.food, hx, hy); say(g, '😋', 2); hearts(g.x, g.y - 30 * s, 3); toast(`${g.name}「ごちそうさま〜」`, 'good'); break;
-    case 'bell': addOxy(RETURN_OXY.bell, hx, hy); say(g, '🎵', 2); toast(`${g.name}が鈴の音で帰ってきた🔔`, 'good'); break;
-    case 'self': addOxy(RETURN_OXY.self, hx, hy); say(g, '😌', 2); toast(`${g.name}は満足して自分で帰ってきた（追い込めば💖+${RETURN_OXY.hand}だったのに…）`); break;
+    case 'food': addOxy(RETURN_OXY.food, hx, hy); addBond(g, BOND_GAIN.home); say(g, '😋', 2); hearts(g.x, g.y - 30 * s, 3); toast(`${g.name}「ごちそうさま〜」`, 'good'); break;
+    case 'bell': addOxy(RETURN_OXY.bell, hx, hy); addBond(g, BOND_GAIN.home); say(g, '🎵', 2); toast(`${g.name}が鈴の音で帰ってきた🔔`, 'good'); break;
+    case 'self': addOxy(RETURN_OXY.self, hx, hy); addBond(g, BOND_GAIN.home); say(g, '😌', 2); toast(`${g.name}は満足して自分で帰ってきた（追い込めば💖+${RETURN_OXY.hand}だったのに…）`); break;
     case 'stick': say(g, '💢', 2.5); g.mood = 'sulk'; g.moodT = 6; toast(`${g.name}は戻ったけど…ムスッ💢`, 'warn'); break;
     default: break;
   }
@@ -647,6 +692,8 @@ function updateGoat(g, dt, rdt) {
       // あまえんぼうは、しばらくなでてもらえないとすねて脱走が早まる
       const lonely = persona(g).lonely && (g.lonelyT += dt) > persona(g).lonely;
       if (lonely && !g.bubble && Math.random() < dt * 0.12) say(g, '🥺', 1.4);
+      // ときどき好物を思い浮かべる（好物さがしのヒント）
+      if (!g.bubble && Math.random() < dt * 0.02) say(g, CROPS[favOf(g)].emoji, 1.4);
       g.escapeT -= dt * (1 + CONTAGION * outsideN) * (S.gateOpen ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1);
       if (outsideN > 0 && !g.bubble && Math.random() < dt * 0.15) say(g, '👀', 1.2);
       if (g.escapeT <= 0) { setState(g, 'toGate'); g.target = null; g.exit = null; say(g, '👀', 1.4); }
@@ -877,7 +924,9 @@ function seedAction(i, fromDrag) {
     const cr = CROPS[pl.crop];
     if (pl.t >= cr.grow) {
       addSero(cr.yield, p.x, p.y - p.s * 0.45);
-      if (pl.crop === 'grass') { S.grassItem++; floatText(p.x, p.y - p.s * 0.7, '+1🌿', '#4caf50', 12 * L.sc); }
+      if (pl.crop === 'grass') S.grassItem++;
+      else S.snacks[pl.crop] = (S.snacks[pl.crop] || 0) + 1;
+      floatText(p.x, p.y - p.s * 0.7, `+1${cr.emoji}`, '#4caf50', 12 * L.sc);
       questEvent({ type: 'harvest', crop: pl.crop }, p.x, p.y - p.s * 0.9);
       parts.push({ type: 'harvest', text: cr.emoji, x: p.x, y: p.y - p.s * 0.2, vx: 0, vy: -120 * L.sc, g: 0, t: 0, life: 0.8, size: p.s * 0.5, rot: 0, vr: 0 });
       sparkles(p.x, p.y - p.s * 0.2, 5);
@@ -901,6 +950,7 @@ function pet(g) {
   g.lonelyT = 0;
   addOxy(P.pet ?? PET_OXY, g.x, g.y - 62 * s);
   questEvent({ type: 'pet', ci: g.ci }, g.x, g.y - 100 * s);
+  addBond(g, BOND_GAIN.pet);
   hearts(g.x, g.y - 36 * s, P.pet ? 3 : 2);
   if (Math.random() < 0.35) floatText(g.x, g.y - 84 * s, pick(P.lines), '#a0785c', 11 * s);
   say(g, pick(['💖', '☺️', '💕']), 1.2);
@@ -979,14 +1029,21 @@ function useFood(x, y) {
     SFX.heart();
   } else if (g.state === 'inside' || g.state === 'toGate') {
     if (g.feedCD > 0) { say(g, '😋', 1); toast(`${g.name}はおなかいっぱい（あと${realSec(g.feedCD)}秒）`); return; }
-    let gain;
-    if (S.grassItem > 0) { S.grassItem--; gain = 3; emojiPart('🌿', g.x + g.dir * 20 * s, g.y - 30 * s, 20 * s, -20); }
-    else if (S.food > 0) { S.food--; gain = 5; emojiPart('🥣', g.x + g.dir * 20 * s, g.y - 26 * s, 20 * s, -20); }
-    else { toast('牧草🌿（畑で収穫）か餌🥣（ショップ）が必要だよ', 'warn'); SFX.nope(); return; }
+    const k = S.snack;
+    if (snackCount(k) <= 0) { toast(`${snackEmoji(k)}${snackName(k)}がない…（${k === 'food' ? 'ショップで買えるよ' : '畑で収穫するとたまるよ'}）`, 'warn'); SFX.nope(); return; }
+    takeSnack(k);
+    const fav = k === favOf(g);
+    const gain = (k === 'food' ? 5 : 3) + (fav ? FAV_OXY : 0);
+    emojiPart(snackEmoji(k), g.x + g.dir * 20 * s, g.y - 28 * s, 20 * s, -20);
     addOxy(gain, g.x, g.y - 62 * s);
     questEvent({ type: 'feed', ci: g.ci }, g.x, g.y - 100 * s);
+    if (fav) {
+      floatText(g.x, g.y - 84 * s, '大好物！', '#ff5c9a', 13 * s); hearts(g.x, g.y - 36 * s, 4);
+      if (!S.favFound[g.ci]) { S.favFound[g.ci] = true; toast(`💡 ${g.name}の好物は${snackEmoji(k)}${snackName(k)}だった！`, 'good'); }
+    }
+    addBond(g, fav ? BOND_GAIN.fav : BOND_GAIN.feed);
     g.feedCD = 12; g.munchT = 1.6; g.sqv -= 3;
-    hearts(g.x, g.y - 36 * s, 3); say(g, '😋', 1.6); g.mood = 'happy'; g.moodT = 2;
+    hearts(g.x, g.y - 36 * s, 3); say(g, fav ? '😍' : '😋', 1.6); g.mood = 'happy'; g.moodT = 2;
     if (g.sulk > 0) g.sulk = Math.max(0, g.sulk - 30);
     if (g.state === 'toGate') { setState(g, 'inside'); g.target = null; g.idle = 1.6; g.escapeT = nextEscape(g); }
     SFX.heart();
@@ -1641,7 +1698,8 @@ function updateUI() {
   $('seroVal').textContent = Math.floor(S.sero);
   $('oxyVal').textContent = Math.floor(S.oxy);
   const lvl = trustLevel();
-  $('trustLv').textContent = `信頼Lv.${lvl}`;
+  const tl = `<span class="gname">信頼</span>Lv.${lvl}`;   // 狭い画面では「信頼」を省く
+  if ($('trustLv').innerHTML !== tl) $('trustLv').innerHTML = tl;
   $('seroBar').style.width = Math.min(100, S.sero / nextSeroGoal() * 100) + '%';
   $('oxyBar').style.width = (lvl >= 10 ? 100 : (S.trustXP - xpFor(lvl)) / (xpFor(lvl + 1) - xpFor(lvl)) * 100) + '%';
   document.querySelectorAll('.tool[data-tool]').forEach(b => {
@@ -1670,10 +1728,13 @@ function renderSubrow() {
   if (S.tool === 'auto') {
     html = '<span class="seedlabel">植える種</span>' + CROP_ORDER.filter(k => S.unlockedCrops[k]).map(k =>
       `<button class="seedbtn ${S.seed === k ? 'active' : ''}" data-seed="${k}"><span class="se">${CROPS[k].emoji}</span><small>${CROPS[k].seed}🌱</small></button>`).join('');
+  } else if (S.tool === 'food') {
+    // 柵の中の子にあげるおやつを選ぶ（脱走ヤギには🥣餌、なければ🌱で釣る）
+    html = '<span class="seedlabel">おやつ</span>' + snackKinds().map(k =>
+      `<button class="seedbtn ${S.snack === k ? 'active' : ''}" data-snack="${k}"><span class="se">${snackEmoji(k)}</span><small>×${snackCount(k)}</small></button>`).join('');
   } else {
     const hints = {
       stick: '近くで使うと❗ビックリして2倍速で柵へ！でもムスッ💢として💖が減る',
-      food: `脱走ヤギ→自分から柵へ帰る(餌 or 🌱${FOOD_LURE_SERO}) ／ 柵の中→プレゼント　🥣${S.food}　🌿${S.grassItem}`,
       bell: S.bellCD > 0 ? `🔔 クールダウン中… あと${realSec(S.bellCD)}秒` : 'どこかをタップで鈴を鳴らす → 脱走中のヤギ全員がおうちへ',
     };
     html = `<div class="hint">${hints[S.tool]}</div>`;
@@ -1698,7 +1759,7 @@ const QUESTS = {
   pet:      { icon: () => '🥰', make: q => { q.ci = pick(goats).ci; q.n = 3; q.stars = 1; },
               text: q => `${goatName(q.ci)}を${q.n}回なでる`, on: (q, e) => e.type === 'pet' && e.ci === q.ci },
   feed:     { icon: () => '🌿', make: q => { q.ci = pick(goats).ci; q.n = 2; q.stars = 1; },
-              text: q => `柵の中の${goatName(q.ci)}に🌿か🥣を${q.n}回あげる`, on: (q, e) => e.type === 'feed' && e.ci === q.ci },
+              text: q => `柵の中の${goatName(q.ci)}におやつを${q.n}回あげる`, on: (q, e) => e.type === 'feed' && e.ci === q.ci },
   herd:     { icon: () => '✋', make: q => { q.n = 2; q.stars = 2; },
               text: q => `脱走した子を手で${q.n}回追い込んで戻す`, on: (q, e) => e.type === 'herd' },
   herdGoat: { icon: () => '🐐', make: q => { q.ci = pick(goats).ci; q.n = 1; q.stars = 2; },
@@ -1836,7 +1897,28 @@ function renderShop() {
   $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy); $('shopStars').textContent = S.stars;
 }
 function openShop() { renderShop(); $('shopModal').classList.remove('hidden'); paused = true; }
-const MODALS = ['shopModal', 'helpModal', 'questModal'];
+const MODALS = ['shopModal', 'helpModal', 'questModal', 'albumModal'];
+
+// なかよし帳：ヤギごとのなかよし度・好物・思い出
+function renderAlbum() {
+  let html = '';
+  goats.forEach(g => {
+    const P = persona(g), lv = bondLevel(g.ci), xp = S.bond[g.ci] || 0, max = BOND_XP.length - 1;
+    const pct = lv >= max ? 100 : (xp - BOND_XP[lv]) / (BOND_XP[lv + 1] - BOND_XP[lv]) * 100;
+    const fav = favOf(g);
+    html += `<div class="bond-card"><div class="bond-head"><b>${P.icon} ${g.name}</b><small>${P.label}</small>`
+      + `<span class="hearts">${Array.from({ length: max }, (_, i) => `<i class="${i < lv ? 'on' : ''}">♥</i>`).join('')}</span></div>`
+      + `<div class="qbar bond"><i style="width:${pct}%"></i></div>`
+      + `<div class="sd">なかよしLv.${lv}${lv >= max ? '（いちばんなかよし！）' : `　つぎまで あと${BOND_XP[lv + 1] - xp}`}</div>`
+      + `<div class="sd">好物：${S.favFound[g.ci] ? `${snackEmoji(fav)}${snackName(fav)}` : '？？？（柵の中でおやつをあげて見つけよう）'}</div>`
+      + '<ul class="memories">' + MEMORIES[g.ci % MEMORIES.length].map((m, i) => i < lv ? `<li>${m}</li>` : `<li class="locked">🔒 なかよしLv.${i + 1}で思い出が増える</li>`).join('') + '</ul></div>';
+  });
+  const rest = MAX_GOATS - goats.length;
+  if (rest > 0) html += `<div class="quest-empty">まだ会っていない子が ${rest}匹 いるよ（ショップでお迎え）</div>`;
+  html += '<div class="quest-note">なでる・おやつ・手で戻すと、その子となかよしになれるよ。なかよしLvが上がるたびに⭐+1</div>';
+  $('albumBody').innerHTML = html;
+}
+function openAlbum() { renderAlbum(); $('albumModal').classList.remove('hidden'); paused = true; }
 function closeModal(id) { $(id).classList.add('hidden'); paused = MODALS.some(m => !$(m).classList.contains('hidden')); }
 
 $('shopList').addEventListener('click', e => {
@@ -1949,10 +2031,12 @@ $('tools').addEventListener('click', e => {
 });
 $('subrow').addEventListener('click', e => {
   const b = e.target.closest('.seedbtn'); if (!b) return;
-  S.seed = b.dataset.seed; SFX.pop(); lastSub = ''; renderSubrow();
+  if (b.dataset.snack) S.snack = b.dataset.snack; else S.seed = b.dataset.seed;
+  SFX.pop(); lastSub = ''; renderSubrow();
 });
 $('speedBtn').addEventListener('click', () => { ensureAudio(); S.speed = S.speed === 1 ? 2 : 1; SFX.pop(); updateUI(); toast(S.speed === 2 ? '⏩ 2x サクサクモード' : '▶ 1x のんびりモード'); });
 $('soundBtn').addEventListener('click', () => { ensureAudio(); S.sound = !S.sound; SFX.pop(); updateUI(); });
+$('albumBtn').addEventListener('click', () => { ensureAudio(); SFX.pop(); openAlbum(); });
 $('helpBtn').addEventListener('click', () => { $('helpModal').classList.remove('hidden'); paused = true; });
 $('startBtn').addEventListener('click', () => { ensureAudio(); if (actx && actx.state === 'suspended') actx.resume(); closeModal('helpModal'); SFX.home(); });
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
@@ -1964,6 +2048,7 @@ window.addEventListener('keydown', e => {
   else if (e.key === 'Escape') MODALS.forEach(closeModal);
   else if (e.key === 's' || e.key === 'S') { if ($('shopModal').classList.contains('hidden')) openShop(); else closeModal('shopModal'); }
   else if (e.key === 'q' || e.key === 'Q') { if ($('questModal').classList.contains('hidden')) openQuests(); else closeModal('questModal'); }
+  else if (e.key === 'a' || e.key === 'A') { if ($('albumModal').classList.contains('hidden')) openAlbum(); else closeModal('albumModal'); }
 });
 window.addEventListener('resize', () => { resize(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) save(); last = performance.now(); });

@@ -174,6 +174,17 @@ button { font-family: inherit; }
 }
 .reroll:active { transform: translateY(2px); }
 .quest-note { font-size: 11.5px; color: #8b7466; text-align: center; }
+.bond-card { background: #fff; border: 2px solid #ffe0ec; border-radius: 16px; padding: 8px 12px; margin-bottom: 8px; }
+.bond-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.bond-head b { font-size: 15px; }
+.bond-head small { font-size: 11px; color: #a0785c; }
+.bond-head .hearts { margin-left: auto; letter-spacing: 1px; font-size: 15px; }
+.hearts i { font-style: normal; color: #eadbd2; }
+.hearts i.on { color: #ff5c9a; }
+.qbar.bond { background: #ffeef4; }
+.qbar.bond i { background: linear-gradient(90deg, #ffb6d0, #ff6fa5); }
+.memories { margin: 4px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.memories .locked { color: #b3a397; list-style: none; margin-left: -14px; }
 .buy:not(:disabled):active { transform: translateY(2px); box-shadow: none; }
 
 .help p { font-size: 13.5px; line-height: 1.6; margin: 6px 0; }
@@ -206,4 +217,10 @@ button { font-family: inherit; }
   .help-grid { grid-template-columns: 1fr; }
   #toasts { top: 60px; }
   .toast { font-size: 12px; }
+}
+/* スマホ縦：ゲージは名前を省いて数値と信頼Lvを残す／おやつ6種が1行に収まるよう詰める */
+@media (max-width: 430px) {
+  .gname { display: none; }
+  #subrow { gap: 4px; }
+  .seedbtn { min-width: 44px; padding: 2px 5px; }
 }
