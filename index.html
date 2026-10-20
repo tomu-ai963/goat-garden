@@ -38,9 +38,9 @@
   <div id="subrow"></div>
   <nav id="tools">
     <button class="tool" data-tool="auto"><span class="ti">👆</span><span class="tl">おまかせ</span></button>
-    <button class="tool" data-tool="stick"><span class="ti"><svg viewBox="0 0 32 32" width="28" height="28"><path d="M7 27 L25 6" stroke="#5b4636" stroke-width="7" stroke-linecap="round"/><path d="M7 27 L25 6" stroke="#b9824f" stroke-width="4" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#5b4636" stroke-width="4.5" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#b9824f" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="16.5" r="3" fill="#7bd36b" stroke="#5b4636" stroke-width="1.2"/></svg></span><span class="tl">木の棒</span><span class="lock">🔒</span></button>
+    <button class="tool" data-tool="stick"><span class="ti"><svg viewBox="0 0 32 32" width="28" height="28"><path d="M7 27 L25 6" stroke="#5b4636" stroke-width="7" stroke-linecap="round"/><path d="M7 27 L25 6" stroke="#b9824f" stroke-width="4" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#5b4636" stroke-width="4.5" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#b9824f" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="16.5" r="3" fill="#7bd36b" stroke="#5b4636" stroke-width="1.2"/></svg></span><span class="tl">木の棒</span><span class="badge" id="stickBadge">0</span></button>
     <button class="tool" data-tool="food"><span class="ti">🥣</span><span class="tl">美味しい餌</span><span class="badge" id="foodBadge">0</span></button>
-    <button class="tool" data-tool="bell"><span class="ti">🔔</span><span class="tl">鈴</span><span class="lock">🔒</span><span class="cd" id="bellCd"></span></button>
+    <button class="tool" data-tool="bell"><span class="ti">🔔</span><span class="tl">鈴</span><span class="badge" id="bellBadge">0</span></button>
     <button class="tool quest" id="questBtn"><span class="ti">📋</span><span class="tl">依頼</span><span class="badge idle" id="questBadge">!</span></button>
     <button class="tool shop" id="shopBtn"><span class="ti">🏪</span><span class="tl">ショップ</span></button>
   </nav>
@@ -110,7 +110,8 @@
         <li><b><svg viewBox="0 0 32 32" width="1.2em" height="1.2em" style="vertical-align:-0.25em" aria-hidden="true"><path d="M7 27 L25 6" stroke="#5b4636" stroke-width="7" stroke-linecap="round"/><path d="M7 27 L25 6" stroke="#b9824f" stroke-width="4" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#5b4636" stroke-width="4.5" stroke-linecap="round"/><path d="M17 15.5 l6 1" stroke="#b9824f" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="16.5" r="3" fill="#7bd36b" stroke="#5b4636" stroke-width="1.2"/></svg> 木の棒</b>：ビックリして2倍速で柵へ！でもヤギが拗ねて💖が減る</li>
         <li><b>🥣 美味しい餌</b>：脱走ヤギが自分から柵へ帰る。柵の中のヤギには、下で選んだおやつ（牧草・収穫した作物・餌）をプレゼント。<b>好物</b>だと大よろこび！</li>
         <li><b>📖 なかよし帳</b>（右上）：なでる・おやつ・手で戻すと、その子となかよしに。Lvが上がると思い出が増えて⭐+1。好物もここに記録されるよ</li>
-        <li><b>🔔 鈴</b>：脱走中のヤギ全員を呼び戻す（クールダウンあり）</li>
+        <li><b>🔔 鈴</b>：脱走中のヤギ全員を呼び戻す</li>
+        <li><b>🎒 道具は消耗品</b>：木の棒・美味しい餌・鈴・ふかふか肥料は、ショップで1回買うと1回使えるよ。🧪肥料は植える種の右から使うと、しばらく畑すべてが2倍速！</li>
         <li><b>📋 依頼</b>：掲示板から1つ選んで受けよう。達成すると⭐がもらえて、ショップの🎀飾り付けで牧場やヤギを飾れるよ（期限なし・いつでも替えられる）。<b>📦納品</b>の依頼は、収穫してたまった作物を掲示板の「届ける」で渡そう</li>
       </ul>
       <p><b>🌙 昼と夜・お天気</b>（小屋の横のアイコンでわかるよ）</p>

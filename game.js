@@ -62,7 +62,9 @@ const PERSONA = [
 ];
 const persona = g => PERSONA[g.ci % PERSONA.length];
 const pv = (g, k) => persona(g)[k] ?? 1;
-const FOOD_PACK_COST = 12, FOOD_LURE_SERO = 8, BELL_CD = 25;
+// 道具は消耗品：1回買うと1回使える（🌱の使いみち）。肥料は使うと FERT_T 秒間、畑すべてが FERT_MUL 倍速
+const ITEM_COST = { stick: 50, food: 100, bell: 500, fert: 200 };
+const FERT_MUL = 2, FERT_T = 60;
 // 💖報酬：やさしく追い込んで戻すのが一番おいしい。なでるは控えめ＆すぐ満足する
 const RETURN_OXY = { hand: 12, food: 3, bell: 2, self: 1 };
 const FOOD_LURE_OXY = 1;
@@ -139,10 +141,10 @@ function defaultState() {
     unlockedCrops: { grass: true },
     plotCount: START_PLOTS,
     plots: Array.from({ length: MAX_PLOTS }, () => ({ crop: null, t: 0, ruin: 0 })),
-    fenceLvl: 0, stick: false, bell: false, fert: false,
+    fenceLvl: 0, stickN: 0, bellN: 0, fertN: 0, fertT: 0,
     food: 1, grassItem: 0,
     goatDefs: [{ name: GOAT_NAMES[0], c: 0 }],
-    speed: 1, tool: 'auto', seed: 'grass', bellCD: 0,
+    speed: 1, tool: 'auto', seed: 'grass',
     sound: true, bgm: true, vibe: true, seen: {}, gateOpen: false,
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
@@ -159,6 +161,12 @@ try {
     S.plots.forEach(p => { if (!(p.ruin > 0)) p.ruin = 0; });
     if (!TOOLS.includes(S.tool)) S.tool = 'auto';   // 旧セーブの seed/pet/hand → おまかせ
     if (d.s.bgm === undefined && d.s.sound === false) S.bgm = false;
+    // 旧セーブの「解放済み（使い放題）」の道具は、消耗品への切り替えの代わりに回数で渡す
+    if (S.stick === true) S.stickN += 3;
+    if (S.bell === true) S.bellN += 1;
+    if (S.fert === true) S.fertN += 1;
+    delete S.stick; delete S.bell; delete S.fert; delete S.bellCD;
+    ['stickN', 'bellN', 'fertN', 'fertT', 'food'].forEach(k => { if (!Number.isFinite(S[k]) || S[k] < 0) S[k] = 0; });
     if (!Number.isFinite(S.dayT)) S.dayT = DAY_LEN * 0.05;
     S.dayT = ((S.dayT % DAY_LEN) + DAY_LEN) % DAY_LEN;
     if (!S.weather || !WEATHER[S.weather.k] || !Number.isFinite(S.weather.t) || !Number.isFinite(S.weather.wait)) S.weather = { k: 'clear', t: 0, wait: 90 };   // 音を切っていた人には BGM も鳴らさない
@@ -1059,10 +1067,11 @@ function handPush(x, y, stick) {
     floatText(x, y - 14 * L.sc, 'ポンッ', '#ff8fb8', 13 * L.sc);
     SFX.pop();
   }
-  let hit = 0;
+  let hit = 0, used = false;   // used: 木の棒がどれかのヤギに届いた（届かなければ消費しない）
   goats.forEach(g => {
     const d = dist(g.x, g.y - 14 * s, x, y);
     if (d > R) return;
+    if (stick && (isOutside(g) || g.state === 'inside' || g.state === 'toGate')) used = true;
     if (isOutside(g)) {
       startFlee(g, x, y, stick); hit += stick ? pv(g, 'stick') : 1;
     } else if (g.state === 'toGate' && !stick) {
@@ -1078,6 +1087,7 @@ function handPush(x, y, stick) {
   });
   if (stick && hit) { addOxy(-3 * hit, x, y - 30 * L.sc); buzz(60); }
   if (stick && hit && !S.seen.stick) { S.seen.stick = true; toast('木の棒は効果バツグン…でもヤギが拗ねちゃう💢', 'warn'); }
+  if (used) useItem('stick');
 }
 
 function startFlee(g, x, y, stick) {
@@ -1103,9 +1113,8 @@ function useFood(x, y) {
   if (!g) { toast('ヤギの近くで使ってね🥣'); SFX.nope(); return; }
   if (isOutside(g)) {
     if (g.state === 'lured' && g.returnMode === 'food') return;
-    if (S.food > 0) { S.food--; }
-    else if (S.sero >= FOOD_LURE_SERO) { addSero(-FOOD_LURE_SERO, x, y - 20 * L.sc); }
-    else { toast('餌もセロトニンも足りない…', 'warn'); SFX.nope(); return; }
+    if (S.food <= 0) { toast(`🥣 美味しい餌がない…（ショップで🌱${ITEM_COST.food}）`, 'warn'); SFX.nope(); return; }
+    S.food--;
     setState(g, 'lured'); g.returnMode = 'food'; g.eatPlot = -1; g.fxT = 0;
     addOxy(FOOD_LURE_OXY, g.x, g.y - 62 * s);
     hearts(g.x, g.y - 36 * s, 4); say(g, '😍', 1.6); g.mood = 'happy'; g.moodT = 3; g.sqv -= 3;
@@ -1134,9 +1143,10 @@ function useFood(x, y) {
 }
 
 function ringBell(x, y) {
-  if (!S.bell) return;
-  if (S.bellCD > 0) { toast(`🔔 鈴はあと${realSec(S.bellCD)}秒で使えるよ`); SFX.nope(); return; }
-  S.bellCD = BELL_CD;
+  if (S.bellN <= 0) return;
+  // みんな柵の中にいるときは鳴らさない（高いので、むだに使わせない）
+  if (!goats.some(isOutside)) { toast('🔔 みんな柵の中にいるよ（鈴はとっておいたよ）'); SFX.nope(); return; }
+  useItem('bell');
   ripple(x, y, 220 * L.sc, '#ffe066'); ripple(x, y, 140 * L.sc, '#ffffff');
   parts.push({ type: 'emoji', text: '🔔', x, y: y - 20 * L.sc, vx: 0, vy: -30 * L.sc, g: 0, t: 0, life: 1.2, size: 36 * L.sc, rot: 0, vr: 0, swing: true });
   for (let i = 0; i < 5; i++) emojiPart(pick(['🎵', '🎶']), x + rand(-40, 40) * L.sc, y + rand(-30, 10) * L.sc, 16 * L.sc, -60);
@@ -1146,7 +1156,25 @@ function ringBell(x, y) {
     if (isOutside(g)) { if (!(g.state === 'lured' && g.returnMode === 'food')) { setState(g, 'lured'); g.returnMode = 'bell'; g.eatPlot = -1; } say(g, '🎵', 1.5); n++; }
     else say(g, '🎵', 1);
   });
-  toast(n ? `🔔 チリリン♪ ${n}匹が帰りはじめた` : '🔔 チリリン♪（みんな柵の中にいるよ）');
+  toast(`🔔 チリリン♪ ${n}匹が帰りはじめた`);
+}
+
+// 消耗品の残り数。使いきったら、その道具からおまかせに戻す
+const ITEM_KEY = { stick: 'stickN', food: 'food', bell: 'bellN', fert: 'fertN' };
+const ITEM_NAME = { stick: '木の棒', food: '美味しい餌', bell: '鈴', fert: 'ふかふか肥料' };
+const itemCount = k => S[ITEM_KEY[k]];
+function useItem(k) {
+  S[ITEM_KEY[k]] = Math.max(0, S[ITEM_KEY[k]] - 1);
+  if (S[ITEM_KEY[k]] === 0 && S.tool === k) { S.tool = 'auto'; toast(`${ITEM_NAME[k]}を使いきった（ショップで買えるよ）`); }
+}
+// ふかふか肥料：使うと FERT_T 秒間、畑すべてが FERT_MUL 倍速で育つ（使っている間に使うと時間がのびる）
+function useFert() {
+  if (S.fertN <= 0) { toast(`🧪 ふかふか肥料がない…（ショップで🌱${ITEM_COST.fert}）`); openShop(); return; }
+  useItem('fert');
+  S.fertT += FERT_T;
+  SFX.level(); buzz([20, 30, 20]);
+  for (let i = 0; i < S.plotCount; i++) { const p = L.plots[i]; plotFx[i].sqv = 4; sparkles(p.x, p.y - p.s * 0.2, 3); }
+  toast(`🧪 畑がふかふかに！${FERT_T}秒間 成長${FERT_MUL}倍`, 'good');
 }
 
 // おまかせ：タップした場所から行動を決める
@@ -1715,7 +1743,7 @@ function phaseAt(k = S.dayT / DAY_LEN) { let p = PHASES[0]; for (const q of PHAS
 const isNight = () => phaseAt()[1] === 'night';
 const weatherOf = () => WEATHER[S.weather.k];
 // 作物の育つ速さ（肥料×天気）と、柵の中の子の脱走タイマーの進む速さ（夜×天気）
-const growRate = () => (S.fert ? 1.3 : 1) * (weatherOf().grow ?? 1);
+const growRate = () => (S.fertT > 0 ? FERT_MUL : 1) * (weatherOf().grow ?? 1);
 const envEsc = () => (isNight() ? NIGHT_ESC : 1) * (weatherOf().esc ?? 1);
 
 // 空の色：1日の割合 k ごとの重ね色 [k, r, g, b, a]。夜は青く暗く、朝と夕方は暖色
@@ -1833,7 +1861,11 @@ function update(dt, rdt) {
   goats.forEach(g => updateGoat(g, dt, rdt));
   separateGoats();
   updateParts(rdt);
-  S.bellCD = Math.max(0, S.bellCD - dt);
+  if (S.fertT > 0) {
+    S.fertT = Math.max(0, S.fertT - dt);
+    if (S.fertT === 0) toast('🧪 ふかふか肥料の効果がおわった');
+    else if (Math.random() < dt * 2) { const i = Math.floor(Math.random() * S.plotCount), p = L.plots[i]; if (S.plots[i].crop) sparkles(p.x + rand(-0.3, 0.3) * p.s, p.y - p.s * 0.2, 1); }
+  }
   gateK += ((S.gateOpen ? 1 : 0) - gateK) * Math.min(1, rdt * 10);
   // 開けっぱなし判定：追い込み中（外に誰かいる・帰宅中）はゲートが要るので数えない
   const needGate = goats.some(g => isOutside(g) || g.state === 'entering');
@@ -1882,9 +1914,6 @@ function nextSeroGoal() {
   CROP_ORDER.forEach(k => { if (!S.unlockedCrops[k]) costs.push(CROPS[k].unlock); });
   if (S.plotCount < MAX_PLOTS) costs.push(PLOT_COSTS[S.plotCount - START_PLOTS]);
   if (S.fenceLvl < 3) costs.push(FENCE_COSTS[S.fenceLvl]);
-  if (!S.stick) costs.push(15);
-  if (!S.bell) costs.push(120);
-  if (!S.fert) costs.push(80);
   const above = costs.filter(c => c > S.sero);
   return above.length ? Math.min(...above) : (costs.length ? Math.min(...costs) : 500);
 }
@@ -1901,15 +1930,13 @@ function updateUI() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => {
     const t = b.dataset.tool;
     b.classList.toggle('active', t === S.tool);
-    b.classList.toggle('locked', (t === 'stick' && !S.stick) || (t === 'bell' && !S.bell));
+    b.classList.toggle('locked', (t === 'stick' || t === 'bell') && itemCount(t) <= 0);
   });
   $('foodBadge').textContent = S.food;
+  $('stickBadge').textContent = S.stickN; $('bellBadge').textContent = S.bellN;
   const qa = S.quest && S.quest.active, qb = $('questBadge'), ready = deliverReady(qa);
   qb.textContent = ready ? '📦' : qa ? `${qa.prog}/${qa.n}` : '!';
   qb.classList.toggle('idle', !qa || ready);   // 受けていない／届けられる ときは跳ねて知らせる
-  const cd = $('bellCd');
-  cd.classList.toggle('on', S.bell && S.bellCD > 0);
-  cd.textContent = S.bellCD > 0 ? Math.ceil(S.bellCD) : '';
   const sb = $('speedBtn');
   const spHtml = S.speed === 1 ? '▶ 1x<span class="sp-label"> のんびり</span>' : '⏩ 2x<span class="sp-label"> サクサク</span>';
   if (sb.dataset.h !== spHtml) { sb.dataset.h = spHtml; sb.innerHTML = spHtml; }
@@ -1923,15 +1950,17 @@ function renderSubrow() {
   let html;
   if (S.tool === 'auto') {
     html = '<span class="seedlabel">植える種</span>' + CROP_ORDER.filter(k => S.unlockedCrops[k]).map(k =>
-      `<button class="seedbtn ${S.seed === k ? 'active' : ''}" data-seed="${k}"><span class="se">${CROPS[k].emoji}</span><small>${CROPS[k].seed}🌱</small></button>`).join('');
+      `<button class="seedbtn ${S.seed === k ? 'active' : ''}" data-seed="${k}"><span class="se">${CROPS[k].emoji}</span><small>${CROPS[k].seed}🌱</small></button>`).join('')
+      // 肥料：持っているか効いている間だけ出す（効いている間は残り秒）
+      + (S.fertN > 0 || S.fertT > 0 ? `<button class="seedbtn fert ${S.fertT > 0 ? 'active' : ''}" data-fert="1"><span class="se">🧪</span><small>${S.fertT > 0 ? `${realSec(S.fertT)}秒` : `×${S.fertN}`}</small></button>` : '');
   } else if (S.tool === 'food') {
-    // 柵の中の子にあげるおやつを選ぶ（脱走ヤギには🥣餌、なければ🌱で釣る）
+    // 柵の中の子にあげるおやつを選ぶ（脱走ヤギには🥣餌）
     html = '<span class="seedlabel">おやつ</span>' + snackKinds().map(k =>
       `<button class="seedbtn ${S.snack === k ? 'active' : ''}" data-snack="${k}"><span class="se">${snackEmoji(k)}</span><small>×${snackCount(k)}</small></button>`).join('');
   } else {
     const hints = {
-      stick: '近くで使うと❗ビックリして2倍速で柵へ！でもムスッ💢として💖が減る',
-      bell: S.bellCD > 0 ? `🔔 クールダウン中… あと${realSec(S.bellCD)}秒` : 'どこかをタップで鈴を鳴らす → 脱走中のヤギ全員がおうちへ',
+      stick: `近くで使うと❗ビックリして2倍速で柵へ！でもムスッ💢として💖が減る（残り${S.stickN}本）`,
+      bell: `どこかをタップで鈴を鳴らす → 脱走中のヤギ全員がおうちへ（残り${S.bellN}回）`,
     };
     html = `<div class="hint">${hints[S.tool]}</div>`;
   }
@@ -1939,8 +1968,7 @@ function renderSubrow() {
 }
 
 function setTool(t) {
-  if (t === 'stick' && !S.stick) { toast('🔒 木の棒はショップで解放できるよ'); openShop(); return; }
-  if (t === 'bell' && !S.bell) { toast('🔒 鈴はショップで解放できるよ'); openShop(); return; }
+  if ((t === 'stick' || t === 'bell') && itemCount(t) <= 0) { toast(`${ITEM_NAME[t]}を持っていないよ。ショップで🌱${ITEM_COST[t]}`); openShop(); return; }
   S.tool = t; SFX.pop(); updateUI();
 }
 
@@ -2094,12 +2122,14 @@ function shopItems() {
   const pc = S.plotCount < MAX_PLOTS ? PLOT_COSTS[S.plotCount - START_PLOTS] : 0;
   it.push({ sec: '🟫 畑', icon: '🟫', name: `畑を広げる（${S.plotCount}/${MAX_PLOTS}）`, desc: '作物を植えられる区画が1つ増える', cost: pc, cur: 'sero', done: S.plotCount >= MAX_PLOTS,
     buy: () => { S.plotCount++; plotFx[S.plotCount - 1].sqv = 5; toast('畑が広がった！', 'good'); } });
-  it.push({ sec: '🟫 畑', icon: '🧪', name: 'ふかふか肥料', desc: '作物の成長スピードが1.3倍に', cost: 80, cur: 'sero', done: S.fert, buy: () => { S.fert = true; toast('🧪 畑がふかふかになった！', 'good'); } });
   it.push({ sec: '🧱 柵の補強', icon: '🧱', name: S.fenceLvl < 3 ? `柵の補強 Lv.${S.fenceLvl + 1}` : '柵の補強（MAX）', desc: `脱走の間隔が長くなる（現在 ×${FENCE_MUL[S.fenceLvl]}）`, cost: S.fenceLvl < 3 ? FENCE_COSTS[S.fenceLvl] : 0, cur: 'sero', done: S.fenceLvl >= 3,
     buy: () => { S.fenceLvl++; buildBg(); toast(`🧱 柵が Lv.${S.fenceLvl} になった！`, 'good'); } });
-  it.push({ sec: '🎒 誘導アイテム', icon: STICK_ICON, name: '木の棒（解放）', desc: 'ビックリさせて2倍速で柵へ。ただしヤギが拗ねる', cost: 15, cur: 'sero', done: S.stick, buy: () => { S.stick = true; S.tool = 'stick'; } });
-  it.push({ sec: '🎒 誘導アイテム', icon: '🥣', name: '美味しい餌 ×3', desc: `脱走ヤギを呼び戻す／柵の中でプレゼント（所持 ${S.food}）`, cost: FOOD_PACK_COST, cur: 'sero', done: false, buy: () => { S.food += 3; } });
-  it.push({ sec: '🎒 誘導アイテム', icon: '🔔', name: '鈴（解放）', desc: `鳴らすと脱走中の全ヤギが帰ってくる（CT ${BELL_CD}秒）`, cost: 120, cur: 'sero', done: S.bell, buy: () => { S.bell = true; S.tool = 'bell'; } });
+  // 消耗品：1回買うと1回使える
+  const SEC_ITEM = '🎒 道具（1回買うと1回使える）';
+  it.push({ sec: SEC_ITEM, icon: STICK_ICON, name: '木の棒', desc: `ビックリさせて2倍速で柵へ。ただしヤギが拗ねる（所持 ${S.stickN}）`, cost: ITEM_COST.stick, cur: 'sero', done: false, buy: () => { S.stickN++; } });
+  it.push({ sec: SEC_ITEM, icon: '🥣', name: '美味しい餌', desc: `脱走ヤギを呼び戻す／柵の中でプレゼント（所持 ${S.food}）`, cost: ITEM_COST.food, cur: 'sero', done: false, buy: () => { S.food++; } });
+  it.push({ sec: SEC_ITEM, icon: '🔔', name: '鈴', desc: `鳴らすと脱走中の全ヤギが帰ってくる（所持 ${S.bellN}）`, cost: ITEM_COST.bell, cur: 'sero', done: false, buy: () => { S.bellN++; } });
+  it.push({ sec: SEC_ITEM, icon: '🧪', name: 'ふかふか肥料', desc: `使うと${FERT_T}秒間、畑すべてが成長${FERT_MUL}倍。植える種の右の🧪で使う（所持 ${S.fertN}）`, cost: ITEM_COST.fert, cur: 'sero', done: false, buy: () => { S.fertN++; } });
   const n = goats.length;
   it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}（${PERSONA[n].icon}${PERSONA[n].label}）をお迎え` : 'ヤギがいっぱい！', desc: n < MAX_GOATS ? `${n + 1}匹目。${PERSONA[n].desc}` : 'これ以上はお迎えできないよ', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
     buy: () => addGoat() });
@@ -2263,6 +2293,7 @@ $('tools').addEventListener('click', e => {
 });
 $('subrow').addEventListener('click', e => {
   const b = e.target.closest('.seedbtn'); if (!b) return;
+  if (b.dataset.fert) { useFert(); lastSub = ''; renderSubrow(); save(); return; }
   if (b.dataset.snack) S.snack = b.dataset.snack; else S.seed = b.dataset.seed;
   SFX.pop(); lastSub = ''; renderSubrow();
 });
