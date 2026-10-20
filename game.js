@@ -80,6 +80,14 @@ const GATE_OPEN_ESC = 2.5;
 // 依頼掲示板：QUEST_SLOTS 枚から1つ受ける（期限なし・いつでも替えられる）。達成で⭐ → ショップの飾り付け
 const QUEST_SLOTS = 3;
 const HARVEST_N = { grass: 6, flower: 5, carrot: 4, berry: 3, pumpkin: 2 };
+// 納品の依頼：作物ごとの使い道（why）と必要数・ごほうび。かぼちゃは大口
+const DELIVER = {
+  grass:   { why: '冬ごしの干し草', n: 6, stars: 1 },
+  flower:  { why: '花束づくり',     n: 4, stars: 1 },
+  carrot:  { why: 'となりの牧場のおすそわけ', n: 3, stars: 2 },
+  berry:   { why: 'ジャムづくり',   n: 3, stars: 2 },
+  pumpkin: { why: '秋のお祭りの飾り', n: 2, stars: 3 },
+};
 const SCARF_COST = 2;
 const SCARF_COLORS = ['#5cb85c', '#ff6fa5', '#ff9f43', '#4dabf7', '#9b7bff'];
 // なかよし度：ヤギごとの絆。上がるたびに思い出（MEMORIES）が1つ増えて⭐+1
@@ -1708,9 +1716,9 @@ function updateUI() {
     b.classList.toggle('locked', (t === 'stick' && !S.stick) || (t === 'bell' && !S.bell));
   });
   $('foodBadge').textContent = S.food;
-  const qa = S.quest && S.quest.active, qb = $('questBadge');
-  qb.textContent = qa ? `${qa.prog}/${qa.n}` : '!';
-  qb.classList.toggle('idle', !qa);
+  const qa = S.quest && S.quest.active, qb = $('questBadge'), ready = deliverReady(qa);
+  qb.textContent = ready ? '📦' : qa ? `${qa.prog}/${qa.n}` : '!';
+  qb.classList.toggle('idle', !qa || ready);   // 受けていない／届けられる ときは跳ねて知らせる
   const cd = $('bellCd');
   cd.classList.toggle('on', S.bell && S.bellCD > 0);
   cd.textContent = S.bellCD > 0 ? Math.ceil(S.bellCD) : '';
@@ -1768,11 +1776,45 @@ const QUESTS = {
               text: () => `脱走から${SPEED_BONUS[0].t}秒以内に手で戻す（⚡はやい！）`, on: (q, e) => e.type === 'herd' && e.fast },
   combo:    { icon: () => '🎉', make: q => { q.n = 1; q.stars = 3; }, need: () => goats.length >= 2,
               text: () => '🎉2匹連続で手で戻す', on: (q, e) => e.type === 'herd' && e.combo >= 2 },
+  // 納品：たまった作物（おやつと共通の在庫）を掲示板の「届ける」で渡す
+  deliver:  { icon: () => '📦', make: q => { q.crop = pick(CROP_ORDER.filter(k => S.unlockedCrops[k])); Object.assign(q, DELIVER[q.crop]); delete q.why; },
+              text: q => `${DELIVER[q.crop].why}に${CROPS[q.crop].emoji}${CROPS[q.crop].name}を${q.n}つ届ける`, on: () => false },
 };
+function completeQuest(q) {
+  S.stars += q.stars; S.questsDone++;
+  S.quest.active = null;
+  SFX.level();
+  toast(`📋 依頼達成！⭐+${q.stars}（${QUESTS[q.k].text(q)}）`, 'good');
+  if (!S.seen.star) { S.seen.star = true; setTimeout(() => toast('⭐はショップの🎀飾り付けで使えるよ', 'good'), 1200); }
+}
+// 届けられるだけ届ける（足りなければ途中まで）
+function deliverQuest() {
+  const q = S.quest.active;
+  if (!q || q.k !== 'deliver') return;
+  const give = Math.min(snackCount(q.crop), q.n - q.prog);
+  if (give <= 0) { toast(`${CROPS[q.crop].emoji}${CROPS[q.crop].name}がまだないよ。畑で収穫しよう`, 'warn'); SFX.nope(); return; }
+  for (let i = 0; i < give; i++) takeSnack(q.crop);
+  q.prog += give;
+  SFX.harvest();
+  if (q.prog >= q.n) completeQuest(q);
+  else toast(`📦 ${CROPS[q.crop].emoji}を${give}つ届けた（${q.prog}/${q.n}）`, 'good');
+}
+function returnDelivered(q) {
+  if (q.crop === 'grass') S.grassItem += q.prog; else S.snacks[q.crop] = (S.snacks[q.crop] || 0) + q.prog;
+  toast(`📦 届けた${CROPS[q.crop].emoji}×${q.prog}は手元にもどしたよ`);
+}
+const deliverReady = q => q && q.k === 'deliver' && snackCount(q.crop) >= q.n - q.prog;
+// 系統：掲示板に同じ系統が並ばないようにする（3枚が追い込みばかり、を防ぐ）
+const QUEST_FAMILY = { harvest: 'farm', deliver: 'deliver', pet: 'care', feed: 'care', herd: 'herd', herdGoat: 'herd', fast: 'herd', combo: 'herd' };
 function makeQuest(avoid) {
   const ok = Object.keys(QUESTS).filter(k => !QUESTS[k].need || QUESTS[k].need());
-  const pool = ok.filter(k => !avoid.includes(k));
-  const q = { k: pick(pool.length ? pool : ok) };
+  const fams = avoid.map(k => QUEST_FAMILY[k]);
+  let pool = ok.filter(k => !fams.includes(QUEST_FAMILY[k]));
+  if (!pool.length) pool = ok.filter(k => !avoid.includes(k));
+  if (!pool.length) pool = ok;
+  // 系統を先に選ぶ（種類の多い追い込み系ばかり出ないように）
+  const fam = pick([...new Set(pool.map(k => QUEST_FAMILY[k]))]);
+  const q = { k: pick(pool.filter(k => QUEST_FAMILY[k] === fam)) };
   QUESTS[q.k].make(q);
   return q;
 }
@@ -1795,25 +1837,22 @@ function questEvent(e, x, y) {
   if (!q || !QUESTS[q.k].on(q, e)) return;
   q.prog++;
   floatText(x, y, `📋${Math.min(q.prog, q.n)}/${q.n}`, '#7a5af8', 12 * L.sc);
-  if (q.prog < q.n) return;
-  S.stars += q.stars; S.questsDone++;
-  S.quest.active = null;
-  SFX.level();
-  toast(`📋 依頼達成！⭐+${q.stars}（${QUESTS[q.k].text(q)}）`, 'good');
-  if (!S.seen.star) { S.seen.star = true; setTimeout(() => toast('⭐はショップの🎀飾り付けで使えるよ', 'good'), 1200); }
+  if (q.prog >= q.n) completeQuest(q);
 }
+const haveText = q => q.k === 'deliver' ? `　いま ${CROPS[q.crop].emoji}×${snackCount(q.crop)}` : '';
 
 function renderQuests() {
   const a = S.quest.active;
   let html = '<div class="shop-sec">受けている依頼</div>';
   if (a) {
     html += `<div class="shop-row quest-now"><div class="si">${QUESTS[a.k].icon(a)}</div><div class="sb"><div class="sn">${QUESTS[a.k].text(a)}</div>`
-      + `<div class="qbar"><i style="width:${Math.min(100, a.prog / a.n * 100)}%"></i></div><div class="sd">${a.prog}/${a.n}　ごほうび ⭐${a.stars}</div></div>`
-      + '<button class="buy danger" data-q="quit">やめる</button></div>';
+      + `<div class="qbar"><i style="width:${Math.min(100, a.prog / a.n * 100)}%"></i></div><div class="sd">${a.prog}/${a.n}　ごほうび ⭐${a.stars}${haveText(a)}</div></div>`
+      + '<div class="qbtns">' + (a.k === 'deliver' ? `<button class="buy star" data-q="deliver" ${snackCount(a.crop) > 0 ? '' : 'disabled'}>📦 届ける</button>` : '')
+      + '<button class="buy danger" data-q="quit">やめる</button></div></div>';
   } else html += '<div class="quest-empty">下からひとつ選んで受けよう（期限なし・いつでも替えられるよ）</div>';
   html += '<div class="shop-sec">依頼をえらぶ</div>';
   S.quest.offers.forEach((q, i) => {
-    html += `<div class="shop-row"><div class="si">${QUESTS[q.k].icon(q)}</div><div class="sb"><div class="sn">${QUESTS[q.k].text(q)}</div><div class="sd">ごほうび ⭐${q.stars}</div></div>`
+    html += `<div class="shop-row"><div class="si">${QUESTS[q.k].icon(q)}</div><div class="sb"><div class="sn">${QUESTS[q.k].text(q)}</div><div class="sd">ごほうび ⭐${q.stars}${haveText(q)}</div></div>`
       + `<button class="buy star" data-q="${i}">${a ? '替える' : '受ける'}</button></div>`;
   });
   html += '<button class="reroll" data-q="reroll">🔄 ほかの依頼を見る</button><div class="quest-note">⭐はショップの🎀飾り付けで、牧場やヤギを飾るのに使えるよ</div>';
@@ -1825,9 +1864,14 @@ function openQuests() { renderQuests(); $('questModal').classList.remove('hidden
 $('questBody').addEventListener('click', e => {
   const b = e.target.closest('button[data-q]'); if (!b) return;
   const v = b.dataset.q, a = S.quest.active;
-  // 進み具合があるときだけ確認する（替える・やめる自体に罰はない）
-  const letGo = () => !a || a.prog === 0 || confirm(`今の依頼の進み具合（${a.prog}/${a.n}）はなくなるけど、いい？`);
+  // 進み具合があるときだけ確認する（替える・やめる自体に罰はない。届けた作物は手元に返す）
+  const letGo = () => {
+    if (!a || a.prog === 0) return true;
+    if (a.k === 'deliver') { returnDelivered(a); return true; }
+    return confirm(`今の依頼の進み具合（${a.prog}/${a.n}）はなくなるけど、いい？`);
+  };
   if (v === 'reroll') { S.quest.offers = []; fillQuests(); }
+  else if (v === 'deliver') deliverQuest();
   else if (v === 'quit') { if (!letGo()) return; S.quest.active = null; }
   else {
     const i = +v, q = S.quest.offers[i];
