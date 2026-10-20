@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- やぎさん牧場のアイコン。PNG はこの SVG から書き出す（マスカブル用は #bg の角丸をなくして書き出す）。
+       ヤギとハートは中心から半径 205 以内（マスカブルの安全域）に収めてある -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9f6c4"/>
+      <stop offset="1" stop-color="#a6e08c"/>
+    </linearGradient>
+  </defs>
+  <rect id="bg" width="512" height="512" rx="112" fill="url(#sky)"/>
+  <!-- 芝の丘 -->
+  <path d="M0 420 Q130 372 256 396 T512 384 V512 H0Z" fill="#8fd36b" opacity=".55"/>
+
+  <g stroke="#5b4636" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 角 -->
+    <path d="M224 192 Q210 132 168 116" fill="none" stroke-width="30"/>
+    <path d="M224 192 Q210 132 168 116" fill="none" stroke="#f2d7a8" stroke-width="16"/>
+    <path d="M288 192 Q302 132 344 116" fill="none" stroke-width="30"/>
+    <path d="M288 192 Q302 132 344 116" fill="none" stroke="#f2d7a8" stroke-width="16"/>
+    <!-- 耳（横に垂れる） -->
+    <g transform="rotate(-24 158 236)">
+      <ellipse cx="158" cy="236" rx="60" ry="26" fill="#fffaf3" stroke-width="11"/>
+      <ellipse cx="152" cy="236" rx="38" ry="12" fill="#ffc2d4" stroke="none"/>
+    </g>
+    <g transform="rotate(24 354 236)">
+      <ellipse cx="354" cy="236" rx="60" ry="26" fill="#fffaf3" stroke-width="11"/>
+      <ellipse cx="360" cy="236" rx="38" ry="12" fill="#ffc2d4" stroke="none"/>
+    </g>
+    <!-- あごひげ -->
+    <path d="M236 364 Q242 430 256 440 Q270 430 276 364" fill="#fffaf3" stroke-width="10"/>
+    <!-- 顔（縦長） -->
+    <ellipse cx="256" cy="268" rx="96" ry="114" fill="#fffaf3" stroke-width="12"/>
+    <!-- 鼻先 -->
+    <ellipse cx="256" cy="334" rx="54" ry="42" fill="#f6e3cf" stroke="#dcc2a6" stroke-width="5"/>
+    <ellipse cx="238" cy="322" rx="5" ry="7" fill="#5b4636" stroke="none"/>
+    <ellipse cx="274" cy="322" rx="5" ry="7" fill="#5b4636" stroke="none"/>
+    <path d="M242 348 Q256 360 270 348" fill="none" stroke-width="7"/>
+  </g>
+  <!-- 目 -->
+  <circle cx="216" cy="254" r="15" fill="#3b2a22"/>
+  <circle cx="296" cy="254" r="15" fill="#3b2a22"/>
+  <circle cx="221" cy="248" r="5.5" fill="#fff"/>
+  <circle cx="301" cy="248" r="5.5" fill="#fff"/>
+  <!-- ほっぺ -->
+  <ellipse cx="190" cy="296" rx="19" ry="11" fill="#ff8fb0" opacity=".55"/>
+  <ellipse cx="322" cy="296" rx="19" ry="11" fill="#ff8fb0" opacity=".55"/>
+  <!-- 頭の花 -->
+  <g transform="translate(300 172)" stroke="#5b4636" stroke-width="5">
+    <circle cx="0" cy="-15" r="12" fill="#fff"/>
+    <circle cx="14" cy="-5" r="12" fill="#fff"/>
+    <circle cx="9" cy="12" r="12" fill="#fff"/>
+    <circle cx="-9" cy="12" r="12" fill="#fff"/>
+    <circle cx="-14" cy="-5" r="12" fill="#fff"/>
+    <circle cx="0" cy="0" r="9" fill="#ffd43b"/>
+  </g>
+  <!-- ハート（右下・安全域の内側） -->
+  <path transform="translate(356 388) scale(.75) translate(-392 -130)" d="M392 108c-10-18-38-14-38 8 0 18 22 30 38 44 16-14 38-26 38-44 0-22-28-26-38-8z" fill="#ff7aa8" stroke="#5b4636" stroke-width="9" stroke-linejoin="round"/>
+</svg>
