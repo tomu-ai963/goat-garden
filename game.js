@@ -109,6 +109,17 @@ const MEMORIES = [
   ['遠くから、こっそりこっちを見ていた', 'そーっと手を出したら、においをかいでくれた', 'はじめて、自分から近くに寄ってきてくれた',
    '大きな音にびっくりしたとき、わたしの後ろにかくれた', 'もう、なでても耳がぺたんとしない。安心してくれている'],
 ];
+// 昼夜：ゲーム内 DAY_LEN 秒で1日（朝→昼→夕方→夜）。夜はヤギが眠くて脱走しにくい
+const DAY_LEN = 300, NIGHT_ESC = 0.5;
+// 天気イベント：はれの合間（WEATHER_GAP 秒）にときどき起きる。虹は雨上がりに RAINBOW_CHANCE で出る
+//   grow: 作物の育つ速さ  esc: 柵の中の子の脱走タイマーの進む速さ  bonus: 手で戻したときの追加💖
+const WEATHER = {
+  clear:   { icon: '',   label: 'はれ' },
+  rain:    { icon: '🌧️', label: 'あめ', dur: [40, 60], grow: 1.5, esc: 0.7, msg: '🌧️ 雨がふってきた！作物がよく育つよ（ヤギは雨宿りでおとなしい）' },
+  wind:    { icon: '🍃', label: 'かぜ', dur: [30, 45], esc: 1.4, msg: '🍃 風が強い…ヤギたちがソワソワしてる！' },
+  rainbow: { icon: '🌈', label: 'にじ', dur: [25, 25], bonus: 4, msg: '🌈 にじが出た！いま手で戻すと💖+4' },
+};
+const WEATHER_GAP = [60, 120], RAINBOW_CHANCE = 0.6;
 const SAVE_KEY = 'goatGardenSave_v1';
 
 // ---------------------------------------------------------
@@ -135,6 +146,7 @@ function defaultState() {
     sound: true, bgm: true, vibe: true, seen: {}, gateOpen: false,
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
+    dayT: DAY_LEN * 0.05, weather: { k: 'clear', t: 0, wait: 90 },   // 新しい牧場は朝のうちから
   };
 }
 let S = defaultState();
@@ -146,7 +158,10 @@ try {
     while (S.plots.length < MAX_PLOTS) S.plots.push({ crop: null, t: 0, ruin: 0 });
     S.plots.forEach(p => { if (!(p.ruin > 0)) p.ruin = 0; });
     if (!TOOLS.includes(S.tool)) S.tool = 'auto';   // 旧セーブの seed/pet/hand → おまかせ
-    if (d.s.bgm === undefined && d.s.sound === false) S.bgm = false;   // 音を切っていた人には BGM も鳴らさない
+    if (d.s.bgm === undefined && d.s.sound === false) S.bgm = false;
+    if (!Number.isFinite(S.dayT)) S.dayT = DAY_LEN * 0.05;
+    S.dayT = ((S.dayT % DAY_LEN) + DAY_LEN) % DAY_LEN;
+    if (!S.weather || !WEATHER[S.weather.k] || !Number.isFinite(S.weather.t) || !Number.isFinite(S.weather.wait)) S.weather = { k: 'clear', t: 0, wait: 90 };   // 音を切っていた人には BGM も鳴らさない
     ['snacks', 'bond', 'favFound'].forEach(k => { if (!S[k] || typeof S[k] !== 'object') S[k] = {}; });
     if (S.snack !== 'food' && !S.unlockedCrops[S.snack]) S.snack = 'grass';
     isNewGame = false;
@@ -693,6 +708,8 @@ function onReturnHome(g) {
       const sp = SPEED_BONUS.find(b => g.outT < b.t);
       if (sp) { gain += sp.b; tags.push(`${sp.label}+${sp.b}`); }
       if (persona(g).bonus) { gain += persona(g).bonus; tags.push(`${persona(g).icon}${persona(g).label}+${persona(g).bonus}`); }
+      const wb = weatherOf().bonus;
+      if (wb) { gain += wb; tags.push(`${weatherOf().icon}+${wb}`); }
       herdCombo = clock - lastHerdT < COMBO_WIN ? herdCombo + 1 : 1;
       lastHerdT = clock;
       if (herdCombo >= 2) { const b = COMBO_OXY * (herdCombo - 1); gain += b; tags.push(`🎉${herdCombo}匹連続+${b}`); SFX.level(); }
@@ -756,7 +773,8 @@ function updateGoat(g, dt, rdt) {
       if (lonely && !g.bubble && Math.random() < dt * 0.12) say(g, '🥺', 1.4);
       // ときどき好物を思い浮かべる（好物さがしのヒント）
       if (!g.bubble && Math.random() < dt * 0.02) say(g, CROPS[favOf(g)].emoji, 1.4);
-      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (gateLeftOpen() ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1);
+      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (gateLeftOpen() ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1) * envEsc();
+      if (isNight() && !g.bubble && Math.random() < dt * 0.08) say(g, '💤', 1.6);
       // 開けっぱなしのゲートが気になってチラチラ見る
       if (gateLeftOpen() && !g.bubble && Math.random() < dt * 0.25) { say(g, '👀', 1.2); g.dir = Math.sign(L.gate.x - g.x) || g.dir; }
       if (outsideN > 0 && !g.bubble && Math.random() < dt * 0.15) say(g, '👀', 1.2);
@@ -1000,7 +1018,7 @@ function seedAction(i, fromDrag) {
       SFX.harvest(); buzz(12);
       goats.forEach(g => { if (g.eatPlot === i) { g.eatPlot = -1; if (g.state === 'eating') { setState(g, 'roam'); say(g, '😢', 1.2); } } });
     } else if (!fromDrag) {
-      floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / (S.fert ? 1.3 : 1))}秒`, '#8b7466', 12 * L.sc);
+      floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / growRate())}秒`, '#8b7466', 12 * L.sc);
     }
   }
 }
@@ -1262,6 +1280,13 @@ function drawParts() {
       case 'dust': {
         ctx.fillStyle = `rgba(240,226,200,${0.85 * (1 - k)})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.6 + k), 0, TAU); ctx.fill();
+        break;
+      }
+      case 'firefly': {
+        const a = Math.min(1, k * 4, (1 - k) * 3) * (0.55 + Math.sin(p.t * 6 + p.ph) * 0.45);
+        const gr = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 4);
+        gr.addColorStop(0, `rgba(255,250,170,${a})`); gr.addColorStop(1, 'rgba(255,250,170,0)');
+        ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 4, 0, TAU); ctx.fill();
         break;
       }
       case 'crumb': {
@@ -1678,6 +1703,104 @@ function drawCursor(time) {
 }
 
 // ---------------------------------------------------------
+// 昼夜・天気
+// ---------------------------------------------------------
+const PHASES = [   // [始まり(1日の割合), 名前, アイコン, 切り替わりのお知らせ]
+  [0,    'morning', '🌅', '🌅 朝だよ！ヤギたちが起きてきた'],
+  [0.1,  'day',     '☀️', ''],
+  [0.6,  'evening', '🌇', '🌇 夕方。そろそろ日が暮れるよ'],
+  [0.72, 'night',   '🌙', '🌙 夜になった。ヤギたちはおねむ…脱走しにくいよ'],
+];
+function phaseAt(k = S.dayT / DAY_LEN) { let p = PHASES[0]; for (const q of PHASES) if (k >= q[0]) p = q; return p; }
+const isNight = () => phaseAt()[1] === 'night';
+const weatherOf = () => WEATHER[S.weather.k];
+// 作物の育つ速さ（肥料×天気）と、柵の中の子の脱走タイマーの進む速さ（夜×天気）
+const growRate = () => (S.fert ? 1.3 : 1) * (weatherOf().grow ?? 1);
+const envEsc = () => (isNight() ? NIGHT_ESC : 1) * (weatherOf().esc ?? 1);
+
+// 空の色：1日の割合 k ごとの重ね色 [k, r, g, b, a]。夜は青く暗く、朝と夕方は暖色
+const SKY = [[0, 30, 40, 100, 0.34], [0.05, 255, 190, 140, 0.12], [0.12, 255, 255, 255, 0], [0.58, 255, 255, 255, 0],
+  [0.65, 255, 140, 70, 0.16], [0.74, 30, 40, 100, 0.4], [0.97, 30, 40, 100, 0.4], [1, 30, 40, 100, 0.34]];
+function skyTint(k) {
+  let i = 0; while (i < SKY.length - 2 && k >= SKY[i + 1][0]) i++;
+  const a = SKY[i], b = SKY[i + 1], u = clamp((k - a[0]) / (b[0] - a[0]), 0, 1);
+  return [1, 2, 3, 4].map(j => a[j] + (b[j] - a[j]) * u);
+}
+
+let lastPhase = null;
+function updateEnv(dt) {
+  S.dayT = (S.dayT + dt) % DAY_LEN;
+  const ph = phaseAt();
+  if (lastPhase && ph[1] !== lastPhase && ph[3]) toast(ph[3], ph[1] === 'night' ? '' : 'good');
+  lastPhase = ph[1];
+  // 天気：はれの間は次のイベントまで待ち、イベント中は残り時間を減らす
+  const w = S.weather;
+  if (w.k === 'clear') {
+    w.wait -= dt;
+    if (w.wait <= 0) setWeather(Math.random() < 0.55 ? 'rain' : 'wind');
+  } else {
+    w.t -= dt;
+    if (w.t <= 0) {
+      if (w.k === 'rain' && Math.random() < RAINBOW_CHANCE) setWeather('rainbow');
+      else { setWeather('clear'); toast('☀️ いいお天気にもどった', 'good'); }
+    }
+  }
+  // 夜はホタル、風の日は葉っぱが舞う
+  if (isNight() && Math.random() < dt * 1.2) parts.push({ type: 'firefly', x: rand(0, L.w), y: rand(L.top + 20, L.bottom - 20), vx: rand(-12, 12) * L.sc, vy: rand(-10, 4) * L.sc, g: 0, t: 0, life: rand(3, 5), size: rand(2.2, 3.4) * L.sc, ph: rand(0, TAU) });
+  if (w.k === 'wind' && Math.random() < dt * 2.5) parts.push({ type: 'emoji', text: '🍃', x: -20, y: rand(L.top + 20, L.bottom - 40), vx: rand(160, 260) * L.sc, vy: rand(-20, 30) * L.sc, g: 0, t: 0, life: 4, size: rand(14, 20) * L.sc, rot: rand(0, TAU), vr: rand(2, 5) });
+}
+function setWeather(k) {
+  const d = WEATHER[k];
+  S.weather = { k, t: d.dur ? rand(d.dur[0], d.dur[1]) : 0, wait: k === 'clear' ? rand(WEATHER_GAP[0], WEATHER_GAP[1]) : 0 };
+  if (d.msg) toast(d.msg, k === 'wind' ? 'warn' : 'good');
+}
+
+// 虹：世界の奥（畑やヤギより先）に描く
+function drawRainbow() {
+  if (S.weather.k !== 'rainbow') return;
+  const t = S.weather.t, fade = clamp(Math.min(t, WEATHER.rainbow.dur[0] - t) / 3, 0, 1);
+  // 弧のてっぺんがプレイエリアの上から2割あたりに来るように
+  const cx = L.w * 0.5, cy = L.bottom + L.h * 0.15, r = cy - (L.top + (L.bottom - L.top) * 0.2), bw = 9 * L.sc;
+  ctx.save(); ctx.globalAlpha = 0.28 * fade;
+  ['#ff6b6b', '#ffa94d', '#ffe066', '#8ce99a', '#74c0fc', '#b197fc'].forEach((c, i) => {
+    ctx.strokeStyle = c; ctx.lineWidth = bw; ctx.beginPath(); ctx.arc(cx, cy, r - i * bw, Math.PI, TAU); ctx.stroke();
+  });
+  ctx.restore();
+}
+// 空の色＋雨＋夜の小屋の明かり（世界の上、吹き出しや文字の下）
+function drawSky(time) {
+  const [r, g, b, a] = skyTint(S.dayT / DAY_LEN);
+  if (a > 0.005) { ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`; ctx.fillRect(0, 0, L.w, L.h); }
+  if (isNight()) {
+    const h = L.hut, x = h.x + h.s / 2, y = h.y + h.s * 0.82;
+    const gr = ctx.createRadialGradient(x, y, 0, x, y, h.s * 0.6);
+    gr.addColorStop(0, `rgba(255,220,120,${0.55 + Math.sin(time * 3) * 0.05})`); gr.addColorStop(1, 'rgba(255,220,120,0)');
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, h.s * 0.6, 0, TAU); ctx.fill();
+  }
+  if (S.weather.k === 'rain') {
+    ctx.fillStyle = 'rgba(70,90,120,.12)'; ctx.fillRect(0, 0, L.w, L.h);
+    ctx.save(); ctx.strokeStyle = 'rgba(80,115,170,.45)'; ctx.lineWidth = 2.2 * L.sc; ctx.lineCap = 'round';   // 明るい芝の上でも見える濃さ
+    const n = Math.round(L.w * L.h / 5000), len = 14 * L.sc, H = L.h + len;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {   // 決まった並びを時間でずらして降らせる（毎フレーム乱数を引かない）
+      const x = (i * 0.6180339 % 1) * (L.w + 40) - (time * 60) % 40;
+      const y = ((i * 0.7548776 % 1) * H + time * 520 * L.sc) % H - len;
+      ctx.moveTo(x, y); ctx.lineTo(x - 3 * L.sc, y + len);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+}
+// 小屋の横に、いまの時間帯と天気のアイコン
+function drawEnvBadge(time) {
+  const h = L.hut, sc = Math.max(L.sc, 0.75), w = weatherOf();   // スマホでも読める大きさに
+  const x = h.x + h.s + 22 * sc, y = h.y + h.s * 0.2 + Math.sin(time * 2) * 1.5 * sc;
+  const n = w.icon ? 2 : 1, bw = (n * 22 + 8) * sc, bh = 26 * sc;
+  ctx.fillStyle = 'rgba(255,255,255,.8)'; rr(ctx, x - 15 * sc, y - bh / 2, bw, bh, bh / 2); ctx.fill();
+  emoji(phaseAt()[2], x, y, 18 * sc);
+  if (w.icon) emoji(w.icon, x + 22 * sc, y, 17 * sc);
+}
+
+// ---------------------------------------------------------
 // メインループ
 // ---------------------------------------------------------
 let last = performance.now(), uiTimer = 0, saveTimer = 0;
@@ -1693,7 +1816,8 @@ function frame(now) {
 }
 
 function update(dt, rdt) {
-  const growMul = S.fert ? 1.3 : 1;
+  updateEnv(dt);
+  const growMul = growRate();
   clock += dt;
   outsideN = goats.filter(isOutside).length;
   for (let i = 0; i < S.plotCount; i++) {
@@ -1720,6 +1844,7 @@ function update(dt, rdt) {
 function render(time, rdt) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.drawImage(bgCanvas, 0, 0, L.w, L.h);
+  drawRainbow();
   drawGateDoor(time);
   drawGateHint(time);
   for (let i = 0; i < MAX_PLOTS; i++) drawPlotBase(i, time);
@@ -1729,6 +1854,8 @@ function render(time, rdt) {
   for (let i = 0; i < S.plotCount; i++) if (S.plots[i].crop) list.push({ y: L.plots[i].y + L.plots[i].s * 0.14, f: () => drawCrop(i, time, eaten[i]) });
   goats.forEach(g => list.push({ y: g.y, f: () => drawGoat(g, time) }));
   list.sort((a, b) => a.y - b.y).forEach(o => o.f());
+  drawSky(time);
+  drawEnvBadge(time);
   drawParts();
   goats.forEach(drawBubble);
   drawGateLabel(time);
