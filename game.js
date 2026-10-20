@@ -75,8 +75,9 @@ const SPEED_BONUS = [{ t: 8, b: 6, label: '⚡はやい！' }, { t: 16, b: 3, la
 const COMBO_WIN = 5, COMBO_OXY = 5;
 // 両替：💖 OXY_PER_SERO → 🌱1（信頼度の経験値は減らない）
 const OXY_PER_SERO = 10;
-// ゲート：開けっぱなしだと柵の中の子がゲートから出ていきやすい（脱走タイマーの進む倍率）
-const GATE_OPEN_ESC = 2.5;
+// ゲート：外に誰もいないのに GATE_GRACE 秒以上開けたまま＝開けっぱなし。
+// 柵の中の子がゲートから出ていきやすくなる（脱走タイマーの進む倍率）。追い込み中は罰なし
+const GATE_OPEN_ESC = 4, GATE_GRACE = 5;
 // 依頼掲示板：QUEST_SLOTS 枚から1つ受ける（期限なし・いつでも替えられる）。達成で⭐ → ショップの飾り付け
 const QUEST_SLOTS = 3;
 const HARVEST_N = { grass: 6, flower: 5, carrot: 4, berry: 3, pumpkin: 2 };
@@ -159,6 +160,8 @@ const plotFx = Array.from({ length: MAX_PLOTS }, () => ({ sq: 0, sqv: 0 }));
 let paused = false;
 let clock = 0, herdCombo = 0, lastHerdT = -99, outsideN = 0;   // clock はゲーム内時間
 let gateK = 0, lastGateHintT = -99;   // gateK: ドアの開き具合（0=閉 1=開）の表示用
+let gateIdleT = 0, gateWarned = false;   // 外に誰もいない状態でゲートが開いている時間／その開け方で注意済みか
+const gateLeftOpen = () => gateIdleT > GATE_GRACE;
 const hover = { x: -999, y: -999, show: false };
 let clouds = [];
 
@@ -702,7 +705,9 @@ function updateGoat(g, dt, rdt) {
       if (lonely && !g.bubble && Math.random() < dt * 0.12) say(g, '🥺', 1.4);
       // ときどき好物を思い浮かべる（好物さがしのヒント）
       if (!g.bubble && Math.random() < dt * 0.02) say(g, CROPS[favOf(g)].emoji, 1.4);
-      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (S.gateOpen ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1);
+      g.escapeT -= dt * (1 + CONTAGION * outsideN) * (gateLeftOpen() ? GATE_OPEN_ESC : 1) * (lonely ? 1.6 : 1);
+      // 開けっぱなしのゲートが気になってチラチラ見る
+      if (gateLeftOpen() && !g.bubble && Math.random() < dt * 0.25) { say(g, '👀', 1.2); g.dir = Math.sign(L.gate.x - g.x) || g.dir; }
       if (outsideN > 0 && !g.bubble && Math.random() < dt * 0.15) say(g, '👀', 1.2);
       if (g.escapeT <= 0) { setState(g, 'toGate'); g.target = null; g.exit = null; say(g, '👀', 1.4); }
       break;
@@ -862,6 +867,7 @@ function gateClosedHint() {
 const gateHit = (x, y) => dist(x, y, L.gate.x, L.gate.y) < 40 * L.sc;
 function toggleGate() {
   S.gateOpen = !S.gateOpen;
+  gateIdleT = 0; gateWarned = false;
   SFX.gate(S.gateOpen);
   ripple(L.gate.x, L.gate.y, 40 * L.sc, S.gateOpen ? '#ffe066' : '#ffffff');
   floatText(L.gate.x, L.gate.y - 34 * L.sc, S.gateOpen ? 'ガチャ！ひらいた' : 'パタン！しめた', '#c2447a', 12 * L.sc);
@@ -1654,6 +1660,10 @@ function update(dt, rdt) {
   updateParts(rdt);
   S.bellCD = Math.max(0, S.bellCD - dt);
   gateK += ((S.gateOpen ? 1 : 0) - gateK) * Math.min(1, rdt * 10);
+  // 開けっぱなし判定：追い込み中（外に誰かいる・帰宅中）はゲートが要るので数えない
+  const needGate = goats.some(g => isOutside(g) || g.state === 'entering');
+  gateIdleT = S.gateOpen && !needGate ? gateIdleT + dt : 0;
+  if (gateLeftOpen() && !gateWarned) { gateWarned = true; toast('🚪 ゲートが開けっぱなし！中の子が出ていっちゃうよ', 'warn'); }
 }
 
 function render(time, rdt) {
