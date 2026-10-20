@@ -1303,6 +1303,7 @@ function emoji(e, x, y, size, alpha = 1, sx = 1, sy = 1, rot = 0) {
   if (size < 1) return;
   ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); if (rot) ctx.rotate(rot); ctx.scale(sx, sy);
   ctx.font = `${size}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#000';   // 直前の半透明の塗り（影など）の透明度がカラー絵文字にもかかるので、不透明に戻す
   ctx.fillText(e, 0, 0); ctx.restore();
 }
 
