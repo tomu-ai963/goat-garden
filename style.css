@@ -75,6 +75,11 @@ button { font-family: inherit; }
 .seedbtn .se { font-size: 20px; line-height: 24px; }
 .seedbtn small { font-size: 10px; }
 .seedbtn.active { background: linear-gradient(#e2ffd4, #b4ef9c); border-color: #7fd36b; transform: translateY(-3px); }
+.seedbtn { position: relative; }
+.seedbtn.shun::after {   /* 旬の作物 */
+  content: '旬'; position: absolute; top: -7px; right: -5px; background: #ff7a45; color: #fff;
+  font-size: 9.5px; font-weight: bold; border-radius: 99px; padding: 1px 4px; border: 2px solid #fff;
+}
 .seedlabel { font-size: 11px; background: rgba(255,255,255,.8); border-radius: 10px; padding: 3px 8px; }
 
 #tools {
@@ -164,6 +169,7 @@ button { font-family: inherit; }
 .buy:disabled { background: #eee5dd; color: #b3a397; box-shadow: none; cursor: default; }
 .buy.done { background: #fff2c4; color: #a07800; box-shadow: none; }
 .buy.danger { background: #ffe3e3; color: #c0392b; box-shadow: none; }
+.buy.place { background: linear-gradient(#e2f5ff, #9fd8ff); color: #1f4f70; box-shadow: 0 3px 0 #6fb6e0; }
 .buy.star { background: linear-gradient(#efe6ff, #b89cff); color: #3d2470; box-shadow: 0 3px 0 #8c6ee0; }
 .quest-now { border-color: #cdb8ff; background: #faf7ff; }
 .chal-goats { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 8px; }

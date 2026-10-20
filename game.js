@@ -122,6 +122,25 @@ const WEATHER = {
   rainbow: { icon: '🌈', label: 'にじ', dur: [25, 25], bonus: 4, msg: '🌈 にじが出た！いま手で戻すと💖+4' },
 };
 const WEATHER_GAP = [60, 120], RAINBOW_CHANCE = 0.6;
+// 冬は雨の代わりに雪（ヤギは小屋のそばでぬくぬく＝脱走しにくい）
+WEATHER.snow = { icon: '❄️', label: 'ゆき', dur: [40, 60], esc: 0.6, msg: '❄️ 雪がふってきた…ヤギたちは小屋のそばでぬくぬく' };
+// 季節：ゲーム内 SEASON_DAYS 日ごとに春→夏→秋→冬。旬の作物は育ちが SHUN_GROW 倍・収穫が SHUN_YIELD 倍
+const SEASON_DAYS = 2, SHUN_GROW = 1.5, SHUN_YIELD = 1.3;
+const SEASONS = [
+  { name: '春', icon: '🌸', shun: ['flower'],            fall: '🌸', tint: 'rgba(255,200,220,.05)' },
+  { name: '夏', icon: '🌻', shun: ['berry'],             fall: '',   tint: '' },
+  { name: '秋', icon: '🍁', shun: ['pumpkin', 'carrot'], fall: '🍁', tint: 'rgba(255,170,90,.06)' },
+  { name: '冬', icon: '⛄', shun: ['grass'],             fall: '',   tint: 'rgba(225,238,255,.12)' },
+];
+// 設備：置けるのは FAC_SLOTS 個まで（入れかえ自由）。何を置くかで遊び方の方針が変わる
+const FAC_SLOTS = 2;
+const FACILITIES = [
+  { k: 'hive',     icon: '🐝', name: 'みつばちの巣箱',   style: '収益',     desc: '収穫の🌱が+20%',                              cost: 400 },
+  { k: 'sprinkler', icon: '💧', name: 'スプリンクラー',   style: '収益',     desc: '作物の育ちが1.25倍',                          cost: 500 },
+  { k: 'play',     icon: '🧸', name: 'あそび場',         style: 'ふれあい', desc: 'なでる・おやつで💖+1、なかよし+1',             cost: 300 },
+  { k: 'tower',    icon: '🏮', name: '見張り台',         style: 'のんびり', desc: '脱走タイマーが0.8倍（脱走しにくい）',           cost: 350 },
+  { k: 'training', icon: '🏃', name: 'トレーニング場',   style: '腕前',     desc: '手で戻すと💖+4、⚡ボーナスの時間が1.25倍',      cost: 300 },
+];
 // 追い込みチャレンジ：選んだ子を🚩の順に通してゲートへ（手だけ）。スコア＝タイム（ゲーム内秒）＋押した回数、小さいほど良い
 //   コースの座標は畑エリアの [u, v]：u はゲートから遠ざかる向き（0=ゲート側 1=奥）、v はそれと直交する向き
 //   rank: ★3 / ★2 になるスコアの上限。★が増えたぶんだけ⭐
@@ -158,7 +177,8 @@ function defaultState() {
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
     dayT: DAY_LEN * 0.05, weather: { k: 'clear', t: 0, wait: 90 },   // 新しい牧場は朝のうちから
-    chal: {}, chalGoat: 0,   // 追い込みチャレンジの記録 { コースid: { rank, best } } と、走らせる子
+    chal: {}, chalGoat: 0,
+    day: 0, facOwned: {}, facSlots: [],   // 経過した日数（季節はここから）／買った設備と置いている設備   // 追い込みチャレンジの記録 { コースid: { rank, best } } と、走らせる子
   };
 }
 let S = defaultState();
@@ -177,7 +197,9 @@ try {
     if (S.fert === true) S.fertN += 1;
     delete S.stick; delete S.bell; delete S.fert; delete S.bellCD;
     if (!S.chal || typeof S.chal !== 'object') S.chal = {};
-    ['stickN', 'bellN', 'fertN', 'fertT', 'food'].forEach(k => { if (!Number.isFinite(S[k]) || S[k] < 0) S[k] = 0; });
+    if (!Number.isInteger(S.day) || S.day < 0) S.day = 0;
+    if (!S.facOwned || typeof S.facOwned !== 'object') S.facOwned = {};
+    S.facSlots = (Array.isArray(S.facSlots) ? S.facSlots : []).filter((k, i, a) => S.facOwned[k] && FACILITIES.some(f => f.k === k) && a.indexOf(k) === i).slice(0, FAC_SLOTS);    ['stickN', 'bellN', 'fertN', 'fertT', 'food'].forEach(k => { if (!Number.isFinite(S[k]) || S[k] < 0) S[k] = 0; });
     if (!Number.isFinite(S.dayT)) S.dayT = DAY_LEN * 0.05;
     S.dayT = ((S.dayT % DAY_LEN) + DAY_LEN) % DAY_LEN;
     if (!S.weather || !WEATHER[S.weather.k] || !Number.isFinite(S.weather.t) || !Number.isFinite(S.weather.wait)) S.weather = { k: 'clear', t: 0, wait: 90 };   // 音を切っていた人には BGM も鳴らさない
@@ -725,11 +747,12 @@ function onReturnHome(g) {
     case 'hand': {
       let gain = RETURN_OXY.hand;
       const tags = [];
-      const sp = SPEED_BONUS.find(b => g.outT < b.t);
+      const sp = SPEED_BONUS.find(b => g.outT < b.t * (hasFac('training') ? 1.25 : 1));
       if (sp) { gain += sp.b; tags.push(`${sp.label}+${sp.b}`); }
       if (persona(g).bonus) { gain += persona(g).bonus; tags.push(`${persona(g).icon}${persona(g).label}+${persona(g).bonus}`); }
       const wb = weatherOf().bonus;
       if (wb) { gain += wb; tags.push(`${weatherOf().icon}+${wb}`); }
+      if (hasFac('training')) { gain += 4; tags.push('🏃+4'); }
       herdCombo = clock - lastHerdT < COMBO_WIN ? herdCombo + 1 : 1;
       lastHerdT = clock;
       if (herdCombo >= 2) { const b = COMBO_OXY * (herdCombo - 1); gain += b; tags.push(`🎉${herdCombo}匹連続+${b}`); SFX.level(); }
@@ -1036,7 +1059,7 @@ function seedAction(i, fromDrag) {
   } else {
     const cr = CROPS[pl.crop];
     if (pl.t >= cr.grow) {
-      addSero(cr.yield, p.x, p.y - p.s * 0.45);
+      addSero(cropYield(pl.crop), p.x, p.y - p.s * 0.45);
       if (pl.crop === 'grass') S.grassItem++;
       else S.snacks[pl.crop] = (S.snacks[pl.crop] || 0) + 1;
       floatText(p.x, p.y - p.s * 0.7, `+1${cr.emoji}`, '#4caf50', 12 * L.sc);
@@ -1048,7 +1071,7 @@ function seedAction(i, fromDrag) {
       SFX.harvest(); buzz(12);
       goats.forEach(g => { if (g.eatPlot === i) { g.eatPlot = -1; if (g.state === 'eating') { setState(g, 'roam'); say(g, '😢', 1.2); } } });
     } else if (!fromDrag) {
-      floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / growRate())}秒`, '#8b7466', 12 * L.sc);
+      floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / growRateFor(pl.crop))}秒`, '#8b7466', 12 * L.sc);
     }
   }
 }
@@ -1061,9 +1084,10 @@ function pet(g) {
   if (g.satisfiedT > 0) { say(g, '☺️', 1); floatText(g.x, g.y - 60 * s, 'まんぞく〜', '#ff8fb8', 12 * s); return; }
   const P = persona(g);
   g.lonelyT = 0;
-  addOxy(P.pet ?? PET_OXY, g.x, g.y - 62 * s);
+  const play = hasFac('play') ? 1 : 0;   // あそび場：なでる・おやつで💖となかよしが+1
+  addOxy((P.pet ?? PET_OXY) + play, g.x, g.y - 62 * s);
   questEvent({ type: 'pet', ci: g.ci }, g.x, g.y - 100 * s);
-  addBond(g, BOND_GAIN.pet);
+  addBond(g, BOND_GAIN.pet + play);
   hearts(g.x, g.y - 36 * s, P.pet ? 3 : 2);
   if (Math.random() < 0.35) floatText(g.x, g.y - 84 * s, pick(P.lines), '#a0785c', 11 * s);
   say(g, pick(['💖', '☺️', '💕']), 1.2);
@@ -1148,7 +1172,8 @@ function useFood(x, y) {
     if (snackCount(k) <= 0) { toast(`${snackEmoji(k)}${snackName(k)}がない…（${k === 'food' ? 'ショップで買えるよ' : '畑で収穫するとたまるよ'}）`, 'warn'); SFX.nope(); return; }
     takeSnack(k);
     const fav = k === favOf(g);
-    const gain = (k === 'food' ? 5 : 3) + (fav ? FAV_OXY : 0);
+    const play = hasFac('play') ? 1 : 0;
+    const gain = (k === 'food' ? 5 : 3) + (fav ? FAV_OXY : 0) + play;
     emojiPart(snackEmoji(k), g.x + g.dir * 20 * s, g.y - 28 * s, 20 * s, -20);
     addOxy(gain, g.x, g.y - 62 * s);
     questEvent({ type: 'feed', ci: g.ci }, g.x, g.y - 100 * s);
@@ -1156,7 +1181,7 @@ function useFood(x, y) {
       floatText(g.x, g.y - 84 * s, '大好物！', '#ff5c9a', 13 * s); hearts(g.x, g.y - 36 * s, 4);
       if (!S.favFound[g.ci]) { S.favFound[g.ci] = true; toast(`💡 ${g.name}の好物は${snackEmoji(k)}${snackName(k)}だった！`, 'good'); }
     }
-    addBond(g, fav ? BOND_GAIN.fav : BOND_GAIN.feed);
+    addBond(g, (fav ? BOND_GAIN.fav : BOND_GAIN.feed) + play);
     g.feedCD = 12; g.munchT = 1.6; g.sqv -= 3;
     hearts(g.x, g.y - 36 * s, 3); say(g, fav ? '😍' : '😋', 1.6); g.mood = 'happy'; g.moodT = 2;
     if (g.sulk > 0) g.sulk = Math.max(0, g.sulk - 30);
@@ -1331,6 +1356,12 @@ function drawParts() {
       case 'dust': {
         ctx.fillStyle = `rgba(240,226,200,${0.85 * (1 - k)})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.6 + k), 0, TAU); ctx.fill();
+        break;
+      }
+      case 'snow': {
+        const a = Math.min(1, (1 - k) * 4);
+        ctx.fillStyle = `rgba(255,255,255,${0.9 * a})`; ctx.strokeStyle = `rgba(130,155,195,${0.5 * a})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x + Math.sin(p.t * 2 + p.size) * 6 * L.sc, p.y, p.size, 0, TAU); ctx.fill(); ctx.stroke();
         break;
       }
       case 'firefly': {
@@ -1767,7 +1798,14 @@ const isNight = () => phaseAt()[1] === 'night';
 const weatherOf = () => WEATHER[S.weather.k];
 // 作物の育つ速さ（肥料×天気）と、柵の中の子の脱走タイマーの進む速さ（夜×天気）
 const growRate = () => (S.fertT > 0 ? FERT_MUL : 1) * (weatherOf().grow ?? 1);
-const envEsc = () => (isNight() ? NIGHT_ESC : 1) * (weatherOf().esc ?? 1);
+const envEsc = () => (isNight() ? NIGHT_ESC : 1) * (weatherOf().esc ?? 1) * (hasFac('tower') ? 0.8 : 1);
+// 季節と設備
+const seasonOf = () => SEASONS[Math.floor(S.day / SEASON_DAYS) % SEASONS.length];
+const isShun = crop => seasonOf().shun.includes(crop);
+const hasFac = k => S.facSlots.includes(k);
+// 作物ごとの育つ速さ（全体の速さ×スプリンクラー×旬）と収穫量（巣箱×旬）
+const growRateFor = crop => growRate() * (hasFac('sprinkler') ? 1.25 : 1) * (isShun(crop) ? SHUN_GROW : 1);
+const cropYield = crop => Math.round(CROPS[crop].yield * (hasFac('hive') ? 1.2 : 1) * (isShun(crop) ? SHUN_YIELD : 1));
 
 // 空の色：1日の割合 k ごとの重ね色 [k, r, g, b, a]。夜は青く暗く、朝と夕方は暖色
 const SKY = [[0, 30, 40, 100, 0.34], [0.05, 255, 190, 140, 0.12], [0.12, 255, 255, 255, 0], [0.58, 255, 255, 255, 0],
@@ -1780,7 +1818,18 @@ function skyTint(k) {
 
 let lastPhase = null;
 function updateEnv(dt) {
-  S.dayT = (S.dayT + dt) % DAY_LEN;
+  S.dayT += dt;
+  if (S.dayT >= DAY_LEN) {
+    S.dayT -= DAY_LEN;
+    const before = seasonOf();
+    S.day++;
+    const now = seasonOf();
+    if (now !== before) toast(`${now.icon} ${now.name}になった！旬は${now.shun.map(k => CROPS[k].emoji + CROPS[k].name).join('・')}（よく育つ・収穫アップ）`, 'good');
+  }
+  // 季節の舞いもの：春は花びら、秋は紅葉、冬は雪
+  const se = seasonOf();
+  if (se.fall && Math.random() < dt * 0.8) parts.push({ type: 'emoji', text: se.fall, x: rand(-20, L.w), y: L.top - 10, vx: rand(10, 40) * L.sc, vy: rand(25, 45) * L.sc, g: 0, t: 0, life: 9, size: rand(11, 15) * L.sc, rot: rand(0, TAU), vr: rand(-1.5, 1.5) });
+  if (se.name === '冬' && Math.random() < dt * 2) parts.push({ type: 'snow', x: rand(0, L.w), y: L.top - 5, vx: rand(-8, 8) * L.sc, vy: rand(25, 45) * L.sc, g: 0, t: 0, life: 12, size: rand(1.6, 3) * L.sc });
   const ph = phaseAt();
   if (lastPhase && ph[1] !== lastPhase && ph[3]) toast(ph[3], ph[1] === 'night' ? '' : 'good');
   lastPhase = ph[1];
@@ -1788,7 +1837,7 @@ function updateEnv(dt) {
   const w = S.weather;
   if (w.k === 'clear') {
     w.wait -= dt;
-    if (w.wait <= 0) setWeather(Math.random() < 0.55 ? 'rain' : 'wind');
+    if (w.wait <= 0) setWeather(Math.random() < 0.55 ? (seasonOf().name === '冬' ? 'snow' : 'rain') : 'wind');
   } else {
     w.t -= dt;
     if (w.t <= 0) {
@@ -1820,8 +1869,20 @@ function drawRainbow() {
 }
 // 空の色＋雨＋夜の小屋の明かり（世界の上、吹き出しや文字の下）
 function drawSky(time) {
+  const se = seasonOf();
+  if (se.tint) { ctx.fillStyle = se.tint; ctx.fillRect(0, 0, L.w, L.h); }   // 季節の色味
   const [r, g, b, a] = skyTint(S.dayT / DAY_LEN);
   if (a > 0.005) { ctx.fillStyle = `rgba(${r | 0},${g | 0},${b | 0},${a})`; ctx.fillRect(0, 0, L.w, L.h); }
+  if (S.weather.k === 'snow') {
+    ctx.fillStyle = 'rgba(235,242,255,.14)'; ctx.fillRect(0, 0, L.w, L.h);
+    ctx.fillStyle = 'rgba(255,255,255,.95)'; ctx.strokeStyle = 'rgba(130,155,195,.55)'; ctx.lineWidth = 1;   // 明るい芝の上でも見えるよう薄いふち
+    const n = Math.round(L.w * L.h / 6000), H = L.h + 10;
+    for (let i = 0; i < n; i++) {   // 雨と同じく決まった並びを時間でずらす。ふわふわ横にゆれる
+      const x = (i * 0.6180339 % 1) * L.w + Math.sin(time * 1.5 + i) * 10 * L.sc;
+      const y = ((i * 0.7548776 % 1) * H + time * 60 * L.sc) % H - 5;
+      ctx.beginPath(); ctx.arc(x, y, (1.8 + (i % 3)) * L.sc, 0, TAU); ctx.fill(); ctx.stroke();
+    }
+  }
   if (isNight()) {
     const h = L.hut, x = h.x + h.s / 2, y = h.y + h.s * 0.82;
     const gr = ctx.createRadialGradient(x, y, 0, x, y, h.s * 0.6);
@@ -1841,14 +1902,41 @@ function drawSky(time) {
     ctx.stroke(); ctx.restore();
   }
 }
-// 小屋の横に、いまの時間帯と天気のアイコン
+// 設備の置き場：柵と畑のあいだの空き地に2か所（ゲートの小道をはさむ）
+function facSpot(i) {
+  const f = L.fence, sc = L.sc;
+  if (L.portrait) return { x: f.x + f.w * (i === 0 ? 0.2 : 0.8), y: f.y + f.h + 38 * sc };
+  return { x: f.x + f.w + 42 * sc, y: f.y + f.h * (i === 0 ? 0.2 : 0.8) };
+}
+function drawFacilities(time) {
+  const sc = L.sc;
+  S.facSlots.forEach((k, i) => {
+    const fac = FACILITIES.find(f => f.k === k); if (!fac) return;
+    const p = facSpot(i), bob = Math.sin(time * 2 + i * 2) * 1.5 * sc;
+    ctx.fillStyle = 'rgba(60,90,40,.22)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 14 * sc, 22 * sc, 6 * sc, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#fff6e6'; ctx.strokeStyle = '#5b4636'; ctx.lineWidth = 2 * sc;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 19 * sc, 0, TAU); ctx.fill(); ctx.stroke();
+    emoji(fac.icon, p.x, p.y + bob, 24 * sc);
+  });
+}
+
+function placeFac(k) {
+  if (S.facSlots.length >= FAC_SLOTS || S.facSlots.includes(k)) return;
+  const f = FACILITIES.find(x => x.k === k);
+  S.facSlots.push(k);
+  const p = facSpot(S.facSlots.length - 1);
+  sparkles(p.x, p.y, 8); dustPuff(p.x, p.y + 10 * L.sc, 5);
+  toast(`${f.icon} ${f.name}を置いた！（${f.desc}）`, 'good');
+}
+
+// 小屋の横に、いまの季節・時間帯・天気のアイコン
 function drawEnvBadge(time) {
   const h = L.hut, sc = Math.max(L.sc, 0.75), w = weatherOf();   // スマホでも読める大きさに
   const x = h.x + h.s + 22 * sc, y = h.y + h.s * 0.2 + Math.sin(time * 2) * 1.5 * sc;
-  const n = w.icon ? 2 : 1, bw = (n * 22 + 8) * sc, bh = 26 * sc;
+  const icons = [seasonOf().icon, phaseAt()[2], w.icon].filter(Boolean);   // 季節・時間帯・天気
+  const bw = (icons.length * 22 + 8) * sc, bh = 26 * sc;
   ctx.fillStyle = 'rgba(255,255,255,.8)'; rr(ctx, x - 15 * sc, y - bh / 2, bw, bh, bh / 2); ctx.fill();
-  emoji(phaseAt()[2], x, y, 18 * sc);
-  if (w.icon) emoji(w.icon, x + 22 * sc, y, 17 * sc);
+  icons.forEach((e, i) => emoji(e, x + i * 22 * sc, y, 17 * sc));
 }
 
 // ---------------------------------------------------------
@@ -1968,7 +2056,7 @@ function frame(now) {
 function update(dt, rdt) {
   updateEnv(dt);
   updateChallenge(dt);
-  const growMul = growRate();
+  const growMul = Object.fromEntries(CROP_ORDER.map(k => [k, growRateFor(k)]));   // 作物ごと（旬・スプリンクラー込み）
   clock += dt;
   outsideN = goats.filter(isOutside).length;
   for (let i = 0; i < S.plotCount; i++) {
@@ -1976,7 +2064,7 @@ function update(dt, rdt) {
     if (pl.ruin > 0) { pl.ruin = Math.max(0, pl.ruin - dt); if (pl.ruin === 0) plotFx[i].sqv = 3; }
     if (pl.crop) {
       const cr = CROPS[pl.crop], wasReady = pl.t >= cr.grow;
-      pl.t = Math.min(cr.grow, pl.t + dt * growMul);
+      pl.t = Math.min(cr.grow, pl.t + dt * growMul[pl.crop]);
       if (!wasReady && pl.t >= cr.grow) { plotFx[i].sqv = 4; const p = L.plots[i]; sparkles(p.x, p.y - p.s * 0.3, 3); }
     }
   }
@@ -2004,6 +2092,7 @@ function render(time, rdt) {
   drawGateHint(time);
   for (let i = 0; i < MAX_PLOTS; i++) drawPlotBase(i, time);
   drawCourse(time);
+  drawFacilities(time);
   const eaten = {};
   goats.forEach(g => { if (g.state === 'eating') eaten[g.eatPlot] = g; });
   const list = [];
@@ -2086,7 +2175,7 @@ function renderSubrow() {
   let html;
   if (S.tool === 'auto') {
     html = '<span class="seedlabel">植える種</span>' + CROP_ORDER.filter(k => S.unlockedCrops[k]).map(k =>
-      `<button class="seedbtn ${S.seed === k ? 'active' : ''}" data-seed="${k}"><span class="se">${CROPS[k].emoji}</span><small>${CROPS[k].seed}🌱</small></button>`).join('')
+      `<button class="seedbtn ${S.seed === k ? 'active' : ''} ${isShun(k) ? 'shun' : ''}" data-seed="${k}"><span class="se">${CROPS[k].emoji}</span><small>${CROPS[k].seed}🌱</small></button>`).join('')
       // 肥料：持っているか効いている間だけ出す（効いている間は残り秒）
       + (S.fertN > 0 || S.fertT > 0 ? `<button class="seedbtn fert ${S.fertT > 0 ? 'active' : ''}" data-fert="1"><span class="se">🧪</span><small>${S.fertT > 0 ? `${realSec(S.fertT)}秒` : `×${S.fertN}`}</small></button>` : '');
   } else if (S.tool === 'food') {
@@ -2282,6 +2371,14 @@ function shopItems() {
     buy: () => { S.plotCount++; plotFx[S.plotCount - 1].sqv = 5; toast('畑が広がった！', 'good'); } });
   it.push({ sec: '🧱 柵の補強', icon: '🧱', name: S.fenceLvl < 3 ? `柵の補強 Lv.${S.fenceLvl + 1}` : '柵の補強（MAX）', desc: `脱走の間隔が長くなる（現在 ×${FENCE_MUL[S.fenceLvl]}）`, cost: S.fenceLvl < 3 ? FENCE_COSTS[S.fenceLvl] : 0, cur: 'sero', done: S.fenceLvl >= 3,
     buy: () => { S.fenceLvl++; buildBg(); toast(`🧱 柵が Lv.${S.fenceLvl} になった！`, 'good'); } });
+  // 設備：買うのは1回だけ。置く／外すは無料で、置けるのは FAC_SLOTS 個まで
+  const SEC_FAC = `🏗️ 設備（置けるのは${FAC_SLOTS}つ・入れかえ自由／いま ${S.facSlots.length}/${FAC_SLOTS}）`;
+  FACILITIES.forEach(f => {
+    const base = { sec: SEC_FAC, icon: f.icon, name: `${f.name}〔${f.style}〕`, desc: f.desc };
+    if (!S.facOwned[f.k]) it.push({ ...base, cost: f.cost, cur: 'sero', done: false, buy: () => { S.facOwned[f.k] = true; if (S.facSlots.length < FAC_SLOTS) placeFac(f.k); } });
+    else if (hasFac(f.k)) it.push({ ...base, cur: 'action', label: '外す', cls: 'danger', buy: () => { S.facSlots = S.facSlots.filter(k => k !== f.k); toast(`${f.icon} ${f.name}を外した`); } });
+    else it.push({ ...base, cur: 'action', label: S.facSlots.length < FAC_SLOTS ? '置く' : '枠がいっぱい', cls: 'place', disabled: S.facSlots.length >= FAC_SLOTS, buy: () => placeFac(f.k) });
+  });
   // 消耗品：1回買うと1回使える
   const SEC_ITEM = '🎒 道具（1回買うと1回使える）';
   it.push({ sec: SEC_ITEM, icon: STICK_ICON, name: '木の棒', desc: `ビックリさせて2倍速で柵へ。ただしヤギが拗ねる（所持 ${S.stickN}）`, cost: ITEM_COST.stick, cur: 'sero', done: false, buy: () => { S.stickN++; } });
@@ -2309,6 +2406,7 @@ function renderShop() {
     if (it.sec !== sec) { sec = it.sec; html += `<div class="shop-sec">${sec}</div>`; }
     let btn;
     if (it.cur === 'reset') btn = `<button class="buy danger" data-i="${i}">リセット</button>`;
+    else if (it.cur === 'action') btn = `<button class="buy ${it.cls}" data-i="${i}" ${it.disabled ? 'disabled' : ''}>${it.label}</button>`;
     else if (it.done) btn = `<button class="buy done" disabled>✔ 済み</button>`;
     else btn = `<button class="buy ${it.cur === 'sero' ? '' : it.cur}" data-i="${i}" ${wallet(it.cur) < it.cost ? 'disabled' : ''}>${CUR_ICON[it.cur]} ${it.cost}</button>`;
     html += `<div class="shop-row"><div class="si">${it.icon}</div><div class="sb"><div class="sn">${it.name}</div><div class="sd">${it.desc}</div></div>${btn}</div>`;
@@ -2349,6 +2447,7 @@ $('shopList').addEventListener('click', e => {
     return;
   }
   if (it.done) return;
+  if (it.cur === 'action') { if (it.disabled) return; it.buy(); SFX.pop(); renderShop(); updateUI(); save(); return; }
   if (wallet(it.cur) < it.cost) return;
   if (it.cur === 'sero') { S.sero -= it.cost; bumpGauge('seroGauge'); }
   else if (it.cur === 'oxy') { S.oxy -= it.cost; bumpGauge('oxyGauge'); }
