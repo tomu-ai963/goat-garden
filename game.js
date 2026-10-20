@@ -132,7 +132,7 @@ function defaultState() {
     food: 1, grassItem: 0,
     goatDefs: [{ name: GOAT_NAMES[0], c: 0 }],
     speed: 1, tool: 'auto', seed: 'grass', bellCD: 0,
-    sound: true, seen: {}, gateOpen: false,
+    sound: true, bgm: true, vibe: true, seen: {}, gateOpen: false,
     stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
   };
@@ -146,6 +146,7 @@ try {
     while (S.plots.length < MAX_PLOTS) S.plots.push({ crop: null, t: 0, ruin: 0 });
     S.plots.forEach(p => { if (!(p.ruin > 0)) p.ruin = 0; });
     if (!TOOLS.includes(S.tool)) S.tool = 'auto';   // 旧セーブの seed/pet/hand → おまかせ
+    if (d.s.bgm === undefined && d.s.sound === false) S.bgm = false;   // 音を切っていた人には BGM も鳴らさない
     ['snacks', 'bond', 'favFound'].forEach(k => { if (!S[k] || typeof S[k] !== 'object') S[k] = {}; });
     if (S.snack !== 'food' && !S.unlockedCrops[S.snack]) S.snack = 'grass';
     isNewGame = false;
@@ -170,8 +171,8 @@ let clouds = [];
 // ---------------------------------------------------------
 let actx = null;
 function ensureAudio() {
-  if (actx) return;
-  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+  bgmSync();
 }
 function tone(f1, f2, dur, type = 'sine', vol = 0.12, delay = 0) {
   if (!S.sound || !actx) return;
@@ -202,6 +203,55 @@ const SFX = {
   nope:    () => { tone(240, 180, 0.15, 'sine', 0.08); },
 };
 
+// BGM：音源ファイルなしで、その場で鳴らすのんびりした8小節ループ（C→Am→F→G を2小節ずつ）
+const BGM_BPM = 92, BGM_VOL = 0.09;
+const BGM_CHORDS = [[48, 55, 64], [45, 52, 60], [41, 48, 57], [43, 50, 59]];
+const BGM_MELODY = [   // 1拍ずつ（MIDIノート番号、0は休み）。C ペンタトニック中心
+  72, 76, 79, 76,  74, 72, 74, 0,   69, 72, 76, 72,  74, 76, 72, 0,
+  72, 76, 74, 72,  69, 67, 69, 0,   67, 69, 72, 74,  76, 74, 72, 0,
+];
+let bgmTimer = null, bgmGain = null, bgmStep = 0, bgmNextT = 0;
+const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+function bgmNote(m, t, dur, type, vol) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.value = midiHz(m);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(bgmGain);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+// 少し先（0.4秒）までの音を予約していく
+function bgmTick() {
+  const beat = 60 / BGM_BPM;
+  while (bgmNextT < actx.currentTime + 0.4) {
+    const i = bgmStep % BGM_MELODY.length, ch = BGM_CHORDS[Math.floor(i / 8) % BGM_CHORDS.length];
+    if (i % 4 === 0) { bgmNote(ch[0] - 12, bgmNextT, beat * 1.8, 'sine', 0.9); ch.forEach(m => bgmNote(m, bgmNextT, beat * 3.6, 'triangle', 0.18)); }
+    if (i % 4 === 2) bgmNote(ch[1] - 12, bgmNextT, beat * 1.6, 'sine', 0.6);
+    if (BGM_MELODY[i]) bgmNote(BGM_MELODY[i], bgmNextT, beat * 0.9, 'triangle', 0.45);
+    bgmNextT += beat; bgmStep++;
+  }
+}
+function bgmStart() {
+  if (bgmTimer || !actx) return;
+  bgmGain = actx.createGain(); bgmGain.gain.value = BGM_VOL; bgmGain.connect(actx.destination);
+  bgmNextT = actx.currentTime + 0.1;
+  bgmTimer = setInterval(bgmTick, 120);
+  bgmTick();
+}
+function bgmStop() {
+  if (!bgmTimer) return;
+  clearInterval(bgmTimer); bgmTimer = null;
+  const g = bgmGain; bgmGain = null;
+  g.gain.setTargetAtTime(0.0001, actx.currentTime, 0.12);   // ぷつっと切らずにすっと消す
+  setTimeout(() => g.disconnect(), 800);
+}
+// 設定・画面の表示状態に合わせて鳴らす／止める（閉じている間は世界ごと止まるので BGM も止める）
+function bgmSync() { if (actx && S.bgm && !document.hidden) bgmStart(); else bgmStop(); }
+
+// 振動（対応端末のみ。iPhone の Safari は非対応）
+const buzz = p => { if (S.vibe && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) { /* ignore */ } } };
+
 // ---------------------------------------------------------
 // 信頼レベル
 // ---------------------------------------------------------
@@ -219,7 +269,7 @@ function addOxy(n, x, y) {
   const after = trustLevel();
   if (after > before) {
     toast(`💖 信頼度 Lv.${after} にアップ！ヤギがもっとなついた！`, 'good');
-    SFX.level();
+    SFX.level(); buzz([20, 40, 20, 40, 40]);
     goats.forEach(g => { sparkles(g.x, g.y - 30 * L.sc, 5); say(g, '💕', 2); });
   } else if (after < before) {
     toast(`💔 信頼度が Lv.${after} に下がっちゃった…やさしく戻して取り戻そう`, 'warn');
@@ -235,7 +285,7 @@ function addBond(g, n) {
   const after = bondLevel(g.ci);
   if (after <= before) return;
   S.stars += after - before;
-  SFX.level();
+  SFX.level(); buzz([20, 40, 20, 40, 40]);
   hearts(g.x, g.y - 34 * L.sc, 8); sparkles(g.x, g.y - 30 * L.sc, 8);
   toast(`📖 ${g.name}となかよしLv.${after}！思い出が増えた（⭐+${after - before}）`, 'good');
   if (!S.seen.album) { S.seen.album = true; setTimeout(() => toast('思い出は右上の📖なかよし帳で見られるよ', 'good'), 1400); }
@@ -647,6 +697,7 @@ function onReturnHome(g) {
       lastHerdT = clock;
       if (herdCombo >= 2) { const b = COMBO_OXY * (herdCombo - 1); gain += b; tags.push(`🎉${herdCombo}匹連続+${b}`); SFX.level(); }
       addOxy(gain, hx, hy);
+      buzz([25, 40, 35]);
       if (tags.length) floatText(g.x, hy - 22 * s, tags.join(' '), '#ff7a00', 13 * s);
       say(g, '💖', 2); hearts(g.x, g.y - 30 * s, 7); sparkles(g.x, g.y - 30 * s, 6 + tags.length * 4);
       toast(`${g.name}がおうちに帰った！💖 +${gain}${tags.length ? '（' + tags.join(' ') + '）' : ''}`, 'good');
@@ -733,7 +784,7 @@ function updateGoat(g, dt, rdt) {
         setState(g, 'roam'); g.eatPlot = -1; g.noCropT = 0; g.outT = 0; g.sqv -= jumped ? 7 : 4; g.exit = null;
         dustPuff(g.x, g.y, jumped ? 6 : 4); emojiPart('💨', g.x - g.dir * 20 * s, g.y - 10 * s, 18 * s);
         say(g, pick(['🎶', '😋', '✨']), 1.4);
-        SFX.escape();
+        SFX.escape(); buzz(jumped ? 40 : 25);
         toast(jumped ? `🐐 ${g.name}が柵をピョーンと飛び越えた！畑があぶない！` : `🐐 ${g.name}が開いてたゲートから脱走した！`, 'warn');
         if (!S.seen.herd) { S.seen.herd = true; setTimeout(() => toast('ゲートをタップして開けてから、ヤギの近くをタップして追い込もう！戻したらゲートを閉めてね', 'good'), 900); }
       }
@@ -946,7 +997,7 @@ function seedAction(i, fromDrag) {
       sparkles(p.x, p.y - p.s * 0.2, 5);
       plotFx[i].sqv = -5;
       pl.crop = null; pl.t = 0;
-      SFX.harvest();
+      SFX.harvest(); buzz(12);
       goats.forEach(g => { if (g.eatPlot === i) { g.eatPlot = -1; if (g.state === 'eating') { setState(g, 'roam'); say(g, '😢', 1.2); } } });
     } else if (!fromDrag) {
       floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / (S.fert ? 1.3 : 1))}秒`, '#8b7466', 12 * L.sc);
@@ -1007,7 +1058,7 @@ function handPush(x, y, stick) {
       g.sqv -= 2; g.target = null; g.idle = 0.6; say(g, '❔', 0.8);
     }
   });
-  if (stick && hit) addOxy(-3 * hit, x, y - 30 * L.sc);
+  if (stick && hit) { addOxy(-3 * hit, x, y - 30 * L.sc); buzz(60); }
   if (stick && hit && !S.seen.stick) { S.seen.stick = true; toast('木の棒は効果バツグン…でもヤギが拗ねちゃう💢', 'warn'); }
 }
 
@@ -1736,7 +1787,7 @@ function updateUI() {
   const spHtml = S.speed === 1 ? '▶ 1x<span class="sp-label"> のんびり</span>' : '⏩ 2x<span class="sp-label"> サクサク</span>';
   if (sb.dataset.h !== spHtml) { sb.dataset.h = spHtml; sb.innerHTML = spHtml; }
   sb.classList.toggle('fast', S.speed === 2);
-  $('soundBtn').textContent = S.sound ? '🔊' : '🔇';
+  $('soundBtn').textContent = S.sound || S.bgm ? '🔊' : '🔇';
   renderSubrow();
   if (!$('shopModal').classList.contains('hidden')) { $('shopSero').textContent = Math.floor(S.sero); $('shopOxy').textContent = Math.floor(S.oxy); $('shopStars').textContent = S.stars; }
 }
@@ -1793,7 +1844,7 @@ const QUESTS = {
 function completeQuest(q) {
   S.stars += q.stars; S.questsDone++;
   S.quest.active = null;
-  SFX.level();
+  SFX.level(); buzz([30, 60, 30, 60, 60]);
   toast(`📋 依頼達成！⭐+${q.stars}（${QUESTS[q.k].text(q)}）`, 'good');
   if (!S.seen.star) { S.seen.star = true; setTimeout(() => toast('⭐はショップの🎀飾り付けで使えるよ', 'good'), 1200); }
 }
@@ -2089,7 +2140,26 @@ $('subrow').addEventListener('click', e => {
   SFX.pop(); lastSub = ''; renderSubrow();
 });
 $('speedBtn').addEventListener('click', () => { ensureAudio(); S.speed = S.speed === 1 ? 2 : 1; SFX.pop(); updateUI(); toast(S.speed === 2 ? '⏩ 2x サクサクモード' : '▶ 1x のんびりモード'); });
-$('soundBtn').addEventListener('click', () => { ensureAudio(); S.sound = !S.sound; SFX.pop(); updateUI(); });
+// 🔊（PC）は効果音と BGM をまとめて切り替える。個別の設定は「？」の中
+$('soundBtn').addEventListener('click', () => { const on = !(S.sound || S.bgm); S.sound = S.bgm = on; ensureAudio(); SFX.pop(); updateUI(); renderSettings(); });
+const SETTINGS = [
+  { k: 'sound', label: '効果音', on: '🔊', off: '🔇' },
+  { k: 'bgm',   label: 'BGM',   on: '🎵', off: '🔕' },
+  { k: 'vibe',  label: '振動',  on: '📳', off: '📴', need: () => 'vibrate' in navigator },
+];
+function renderSettings() {
+  $('settings').innerHTML = '<span class="seedlabel">⚙️ 設定</span>' + SETTINGS.filter(s => !s.need || s.need()).map(s =>
+    `<button class="setbtn ${S[s.k] ? 'on' : ''}" data-set="${s.k}">${S[s.k] ? s.on : s.off} ${s.label} ${S[s.k] ? 'ON' : 'OFF'}</button>`).join('');
+}
+$('settings').addEventListener('click', e => {
+  const b = e.target.closest('button[data-set]'); if (!b) return;
+  const k = b.dataset.set;
+  S[k] = !S[k];
+  ensureAudio(); SFX.pop();
+  if (k === 'vibe') buzz(40);   // オンにしたら試しにブルッ
+  renderSettings(); updateUI(); save();
+});
+renderSettings();
 $('albumBtn').addEventListener('click', () => { ensureAudio(); SFX.pop(); openAlbum(); });
 $('helpBtn').addEventListener('click', () => { $('helpModal').classList.remove('hidden'); paused = true; });
 $('startBtn').addEventListener('click', () => { ensureAudio(); if (actx && actx.state === 'suspended') actx.resume(); closeModal('helpModal'); SFX.home(); });
@@ -2105,7 +2175,7 @@ window.addEventListener('keydown', e => {
   else if (e.key === 'a' || e.key === 'A') { if ($('albumModal').classList.contains('hidden')) openAlbum(); else closeModal('albumModal'); }
 });
 window.addEventListener('resize', () => { resize(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden) save(); last = performance.now(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) save(); last = performance.now(); bgmSync(); });
 window.addEventListener('beforeunload', save);
 window.addEventListener('pagehide', save);   // スマホのタブ破棄・bfcache でも保存
 

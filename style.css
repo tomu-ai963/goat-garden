@@ -194,6 +194,13 @@ button { font-family: inherit; }
 .help-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
 .help-grid div { background: #fff; border-radius: 14px; padding: 8px 10px; font-size: 12px; line-height: 1.5; }
 .help-grid span { font-size: 20px; margin-right: 4px; }
+.settings { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; margin: 10px 0 2px; }
+.setbtn {
+  border: 2px solid #eee5dd; background: #fff; color: #b3a397; border-radius: 999px;
+  padding: 6px 12px; font-size: 12.5px; font-weight: bold; cursor: pointer;
+}
+.setbtn.on { border-color: #a6ec8e; background: #effbe8; color: #2f7a22; }
+.setbtn:active { transform: translateY(2px); }
 .big-btn {
   display: block; margin: 10px auto 0; border: none; border-radius: 999px; padding: 12px 40px;
   font-size: 17px; font-weight: bold; cursor: pointer;
