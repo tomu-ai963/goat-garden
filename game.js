@@ -33,7 +33,9 @@ const CROP_ORDER = ['grass', 'flower', 'carrot', 'berry', 'pumpkin'];
 const MAX_PLOTS = 12, START_PLOTS = 6;
 const PLOT_COSTS = [20, 30, 45, 65, 90, 120];
 const FENCE_COSTS = [40, 100, 220];
-const FENCE_MUL = [1, 1.3, 1.65, 2.1];
+// 脱走までの時間の伸び。やりこんでも脱走が遊びの中心に残るよう、掛け合わせても伸びすぎない値にする
+const FENCE_MUL = [1, 1.15, 1.3, 1.5];
+const TRUST_ESC = 0.03, GOATS_ESC = 0.06;   // 信頼Lv・ヤギ1匹あたりの伸び
 const GOAT_COSTS = [40, 100, 200, 350];      // 💖で支払い
 const MAX_GOATS = 5;
 const GOAT_NAMES = ['メイ', 'ユキ', 'モカ', 'ココ', 'ラテ'];
@@ -92,6 +94,14 @@ const DELIVER = {
   pumpkin: { why: '秋のお祭りの飾り', n: 2, stars: 3 },
 };
 const SCARF_COST = 2;
+// 小屋の屋根の色：交換すると、あとは無料で何度でも塗り替えられる（cost 0 は最初から持っている色）
+const ROOF_COLORS = [
+  { k: 'pink',     name: 'ピンク',     color: '#ff9aa8', cost: 0 },
+  { k: 'sky',      name: '空色',       color: '#7cc8ff', cost: 4 },
+  { k: 'leaf',     name: '若草色',     color: '#a4dc7e', cost: 4 },
+  { k: 'lemon',    name: 'レモン色',   color: '#ffdc6b', cost: 4 },
+  { k: 'lavender', name: 'ラベンダー', color: '#c7adff', cost: 4 },
+];
 const SCARF_COLORS = ['#5cb85c', '#ff6fa5', '#ff9f43', '#4dabf7', '#9b7bff'];
 // なかよし度：ヤギごとの絆。上がるたびに思い出（MEMORIES）が1つ増えて⭐+1
 // 好物（GOAT_NAMES と同じ並び）は、柵の中でおやつとしてあげると見つかる。脱走中はその畑を狙いやすい
@@ -174,7 +184,9 @@ function defaultState() {
     goatDefs: [{ name: GOAT_NAMES[0], c: 0 }],
     speed: 1, tool: 'auto', seed: 'grass',
     sound: true, bgm: true, vibe: true, seen: {}, gateOpen: false,
-    stars: 0, questsDone: 0, quest: { offers: [], active: null }, deco: {},
+    stars: 0, questsDone: 0, quest: { offers: [], active: null },
+    deco: {}, decoOn: {},   // 交換した飾り／いま飾っている飾り
+    roof: 'pink', roofOwned: {},   // いまの屋根の色／交換した色
     snacks: {}, snack: 'grass', bond: {}, favFound: {},
     dayT: DAY_LEN * 0.05, weather: { k: 'clear', t: 0, wait: 90 },   // 新しい牧場は朝のうちから
     chal: {}, chalGoat: 0,
@@ -182,6 +194,7 @@ function defaultState() {
   };
 }
 let S = defaultState();
+const hasRoof = k => { const r = ROOF_COLORS.find(c => c.k === k); return !!r && (r.cost === 0 || !!S.roofOwned[k]); };
 let isNewGame = true;
 try {
   const d = JSON.parse(localStorage.getItem(SAVE_KEY));
@@ -205,6 +218,12 @@ try {
     if (!S.weather || !WEATHER[S.weather.k] || !Number.isFinite(S.weather.t) || !Number.isFinite(S.weather.wait)) S.weather = { k: 'clear', t: 0, wait: 90 };   // 音を切っていた人には BGM も鳴らさない
     ['snacks', 'bond', 'favFound'].forEach(k => { if (!S[k] || typeof S[k] !== 'object') S[k] = {}; });
     if (S.snack !== 'food' && !S.unlockedCrops[S.snack]) S.snack = 'grass';
+    ['deco', 'roofOwned'].forEach(k => { if (!S[k] || typeof S[k] !== 'object') S[k] = {}; });
+    // 旧セーブ：屋根の塗り替え＝空色。交換済みの飾りは飾ったままにして、見た目を変えない
+    if (S.deco.roof) { S.roofOwned.sky = true; if (d.s.roof === undefined) S.roof = 'sky'; delete S.deco.roof; }
+    if (d.s.decoOn === undefined) S.decoOn = { ...S.deco };
+    if (!S.decoOn || typeof S.decoOn !== 'object') S.decoOn = {};
+    if (!hasRoof(S.roof)) S.roof = 'pink';
     isNewGame = false;
   }
 } catch (e) { /* ignore */ }
@@ -511,7 +530,7 @@ function buildBg() {
   drawYardProps(b, sc);
   drawDecos(b, sc);
   drawFence(b, sc);
-  if (S.deco.flags) drawGarland(b, sc);
+  if (S.decoOn.flags) drawGarland(b, sc);
   // 木（飾り）
   const trees = [];
   for (let i = 0; i < 30 && trees.length < 4; i++) {
@@ -538,7 +557,7 @@ function drawHut(b, sc) {
   b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x + s / 2, y + s + 2 * sc, s * 0.6, 8 * sc, 0, 0, TAU); b.fill();
   b.lineWidth = 2.2 * sc; b.strokeStyle = OL; b.lineJoin = 'round';
   b.fillStyle = '#fff1dc'; rr(b, x + s * 0.08, y + s * 0.38, s * 0.84, s * 0.6, 6 * sc); b.fill(); b.stroke();
-  b.fillStyle = S.deco.roof ? '#7cc8ff' : '#ff9aa8'; b.beginPath(); b.moveTo(x - s * 0.04, y + s * 0.45); b.lineTo(x + s / 2, y + s * 0.02); b.lineTo(x + s * 1.04, y + s * 0.45); b.closePath(); b.fill(); b.stroke();
+  b.fillStyle = ROOF_COLORS.find(c => c.k === S.roof).color; b.beginPath(); b.moveTo(x - s * 0.04, y + s * 0.45); b.lineTo(x + s / 2, y + s * 0.02); b.lineTo(x + s * 1.04, y + s * 0.45); b.closePath(); b.fill(); b.stroke();
   b.fillStyle = 'rgba(255,255,255,.45)'; b.beginPath(); b.moveTo(x + s * 0.18, y + s * 0.38); b.lineTo(x + s / 2, y + s * 0.12); b.lineTo(x + s * 0.55, y + s * 0.18); b.lineTo(x + s * 0.28, y + s * 0.4); b.fill();
   b.fillStyle = '#c58b5a'; b.beginPath(); b.moveTo(x + s * 0.36, y + s * 0.98); b.lineTo(x + s * 0.36, y + s * 0.7); b.arc(x + s / 2, y + s * 0.7, s * 0.14, Math.PI, 0); b.lineTo(x + s * 0.64, y + s * 0.98); b.closePath(); b.fill(); b.stroke();
   b.font = `${12 * sc}px ${EMOJI_FONT}`; b.textAlign = 'center'; b.textBaseline = 'middle'; b.fillText('💗', x + s / 2, y + s * 0.3);
@@ -564,7 +583,7 @@ function drawYardProps(b, sc) {
 // 飾り付け（⭐で交換）：花壇は柵の右下、ベンチは小屋と水飲み場のあいだ
 function drawDecos(b, sc) {
   const f = L.fence, OL = '#5b4636';
-  if (S.deco.bed) {
+  if (S.decoOn.bed) {
     const x = f.x + f.w - 52 * sc, y = f.y + f.h - 24 * sc;
     b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x, y + 8 * sc, 34 * sc, 6 * sc, 0, 0, TAU); b.fill();
     ['#ff8fb8', '#ffd43b', '#ff6b81', '#c49bff', '#ffffff'].forEach((c, i) => {
@@ -575,7 +594,7 @@ function drawDecos(b, sc) {
     });
     b.fillStyle = '#b97c4b'; b.strokeStyle = OL; b.lineWidth = 2 * sc; rr(b, x - 30 * sc, y - 4 * sc, 60 * sc, 12 * sc, 5 * sc); b.fill(); b.stroke();
   }
-  if (S.deco.bench) {
+  if (S.decoOn.bench) {
     const h = L.hut, x = Math.max(f.x + f.w / 2, h.x + h.s + 40 * sc), y = f.y + 34 * sc;
     b.fillStyle = 'rgba(60,100,40,.18)'; b.beginPath(); b.ellipse(x, y + 6 * sc, 26 * sc, 5 * sc, 0, 0, TAU); b.fill();
     b.strokeStyle = OL; b.lineWidth = 3.5 * sc; b.lineCap = 'round';
@@ -677,10 +696,10 @@ function nextEscape(g) {
   const lvl = trustLevel();
   let t = rand(26, 48);
   t *= FENCE_MUL[S.fenceLvl];
-  t *= 1 + (lvl - 1) * 0.08;
+  t *= 1 + (lvl - 1) * TRUST_ESC;
   if (g.sulk > 0) t *= 0.55;
   t *= pv(g, 'esc');
-  t *= 1 + (goats.length - 1) * 0.12;
+  t *= 1 + (goats.length - 1) * GOATS_ESC;
   return t;
 }
 // 脱走ルート：ゲートが開いていればゲートから歩いて、閉まっていれば柵のどこかを飛び越えて出る
@@ -1524,7 +1543,7 @@ function drawGoat(g, time) {
   ctx.beginPath(); ctx.arc(-8, -18, 3, 0.3, 2.6); ctx.arc(-1, -16, 3, 0.3, 2.6); ctx.stroke();
   leg(-6, sw); leg(13, -sw);
   // 首輪 + 鈴（スカーフをもらった子は、よだれかけの上にスカーフ）
-  const scarf = S.deco['scarf' + g.ci];
+  const scarf = S.decoOn['scarf' + g.ci];
   if (!scarf) {
     ctx.strokeStyle = c.collar; ctx.lineWidth = 3.4;
     ctx.beginPath(); ctx.moveTo(11, -32); ctx.quadraticCurveTo(16, -26, 14, -21); ctx.stroke();
@@ -2355,9 +2374,9 @@ const BENCH_ICON = '<svg viewBox="0 0 32 32" width="28" height="28"><path d="M8 
 const DECOS = [
   { k: 'bed',   icon: '🌷',       name: '花壇',               desc: '柵の中に花壇ができる', cost: 3 },
   { k: 'bench', icon: BENCH_ICON, name: 'ベンチ',             desc: '柵の中にひと休みできるベンチを置く', cost: 4 },
-  { k: 'roof',  icon: '🏠',       name: '小屋の屋根の塗り替え', desc: '小屋の屋根をピンクから空色に', cost: 4 },
   { k: 'flags', icon: '🎏',       name: 'ガーランド',          desc: '柵の上に旗飾りをつける', cost: 5 },
 ];
+const roofIcon = color => `<svg viewBox="0 0 32 32" width="28" height="28"><rect x="7" y="14" width="18" height="15" rx="2" fill="#fff1dc" stroke="#5b4636" stroke-width="1.5"/><path d="M3 16 16 4l13 12z" fill="${color}" stroke="#5b4636" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
 const CUR_ICON = { sero: '🌱', oxy: '💖', star: '⭐' };
 const wallet = cur => cur === 'sero' ? S.sero : cur === 'oxy' ? S.oxy : S.stars;
 function shopItems() {
@@ -2389,11 +2408,27 @@ function shopItems() {
   const n = goats.length;
   it.push({ sec: '🐐 ヤギのお迎え（💖で交換）', icon: '🐐', name: n < MAX_GOATS ? `${GOAT_NAMES[n]}（${PERSONA[n].icon}${PERSONA[n].label}）をお迎え` : 'ヤギがいっぱい！', desc: n < MAX_GOATS ? `${n + 1}匹目。${PERSONA[n].desc}` : 'これ以上はお迎えできないよ', cost: n < MAX_GOATS ? GOAT_COSTS[n - 1] : 0, cur: 'oxy', done: n >= MAX_GOATS,
     buy: () => addGoat() });
-  const DSEC = '🎀 飾り付け（📋依頼の⭐で交換）';
-  DECOS.forEach(d => it.push({ sec: DSEC, icon: d.icon, name: d.name, desc: d.desc, cost: d.cost, cur: 'star', done: !!S.deco[d.k],
-    buy: () => { S.deco[d.k] = true; buildBg(); toast(`🎀 ${d.name}を飾った！`, 'good'); } }));
-  goats.forEach(g => it.push({ sec: DSEC, icon: '🧣', name: `${g.name}のスカーフ`, desc: '首輪のかわりに、おそろいのスカーフを巻いてあげる', cost: SCARF_COST, cur: 'star', done: !!S.deco['scarf' + g.ci],
-    buy: () => { S.deco['scarf' + g.ci] = true; say(g, '💕', 2); sparkles(g.x, g.y - 30 * L.sc, 6); toast(`🧣 ${g.name}「にあう？えへへ」`, 'good'); } }));
+  // 飾り：⭐で交換したあと、飾る／外すを無料で選べる（交換しただけでは飾らない）
+  const DSEC = '🎀 飾り付け（📋依頼の⭐で交換・飾る／外すは自由）';
+  const decoItem = (k, base, cost, on, off) => S.deco[k]
+    ? { ...base, cur: 'action', ...(S.decoOn[k]
+        ? { label: '外す', cls: 'danger', buy: () => { delete S.decoOn[k]; off(); } }
+        : { label: '飾る', cls: 'place', buy: () => { S.decoOn[k] = true; on(); } }) }
+    : { ...base, cost, cur: 'star', done: false, buy: () => { S.deco[k] = true; toast(`🎀 ${base.name}と交換した！「飾る」で飾れるよ`, 'good'); } };
+  DECOS.forEach(d => it.push(decoItem(d.k, { sec: DSEC, icon: d.icon, name: d.name, desc: d.desc }, d.cost,
+    () => { buildBg(); toast(`🎀 ${d.name}を飾った！`, 'good'); },
+    () => { buildBg(); toast(`🎀 ${d.name}を外した`); })));
+  goats.forEach(g => it.push(decoItem('scarf' + g.ci, { sec: DSEC, icon: '🧣', name: `${g.name}のスカーフ`, desc: '首輪のかわりに、おそろいのスカーフを巻いてあげる' }, SCARF_COST,
+    () => { say(g, '💕', 2); sparkles(g.x, g.y - 30 * L.sc, 6); toast(`🧣 ${g.name}「にあう？えへへ」`, 'good'); },
+    () => { toast(`🧣 ${g.name}のスカーフを外した`); })));
+  // 屋根の色：色ごとに⭐で交換。交換した色はいつでも塗り替えられる
+  const SEC_ROOF = '🏠 小屋の屋根の色（⭐で交換・塗り替えは自由）';
+  ROOF_COLORS.forEach(r => {
+    const base = { sec: SEC_ROOF, icon: roofIcon(r.color), name: r.name, desc: `小屋の屋根を${r.name}に塗る` };
+    if (S.roof === r.k) it.push({ ...base, cur: 'action', label: '✔ いまの色', cls: 'done', disabled: true, buy: () => {} });
+    else if (hasRoof(r.k)) it.push({ ...base, cur: 'action', label: '塗る', cls: 'place', buy: () => { S.roof = r.k; buildBg(); toast(`🏠 屋根を${r.name}に塗った！`, 'good'); } });
+    else it.push({ ...base, cost: r.cost, cur: 'star', done: false, buy: () => { S.roofOwned[r.k] = true; toast(`🏠 ${r.name}のペンキと交換した！「塗る」で塗れるよ`, 'good'); } });
+  });
   [1, 10].forEach(k => it.push({ sec: '💱 両替（💖→🌱）', icon: '💱', name: `セロトニン ${k}🌱 に両替`, desc: `💖${OXY_PER_SERO * k} を 🌱${k} に交換（信頼Lvは下がらない）`, cost: OXY_PER_SERO * k, cur: 'oxy', done: false,
     buy: () => { addSero(k); toast(`💱 💖${OXY_PER_SERO * k} → 🌱${k} に両替した`, 'good'); } }));
   it.push({ sec: '⚙️ その他', icon: '🗑️', name: 'データをリセット', desc: '最初からやり直す', cost: 0, cur: 'reset', done: false, buy: () => {} });
@@ -2611,6 +2646,8 @@ S.goatDefs.forEach((d, i) => {
   else g.escapeT = (isNewGame && i === 0) ? 14 : nextEscape(g) * 0.6 + i * 5;
   goats.push(g);
 });
+// 保存された残り時間が今の設定より長ければ切り詰める（古い長いタイマーを引きずらない）
+goats.forEach(g => { g.escapeT = Math.min(g.escapeT, nextEscape(g)); });
 fillQuests();
 updateUI();
 if (isNewGame) { $('helpModal').classList.remove('hidden'); paused = true; }
