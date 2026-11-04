@@ -47,7 +47,7 @@ const GOAT_COLORS = [
   { body: '#8d7466', leg: '#776055', accent: '#c9a493', collar: '#63e6be' },
 ];
 // ヤギの性格。項目がない倍率は 1（ふつう）
-//   esc: 脱走までの時間  walk: 歩く速さ  rush: 作物へ向かう速さ  eat: 食べ終わるまでの時間
+//   esc: 脱走までの時間  walk: 歩く速さ  rush: 作物へ向かう速さ
 //   pet/petMax: なでたときの💖と喜ぶ回数  lonely: かまわれないと脱走が早まるまでの秒数
 //   lure: 餌で帰る速さ  flee/fleeT: 逃げる速さと逃げる時間  bonus: 手で戻したときの追加💖  stick: 木の棒の💖減少・拗ね
 const PERSONA = [
@@ -55,7 +55,7 @@ const PERSONA = [
     lines: ['ふわぁ〜', 'のんびり〜', 'ぽかぽか〜'] },
   { label: 'あまえんぼう', icon: '🎀', desc: 'なでると💖+2、5回まで喜ぶ。かまわないとすねて脱走が早まる', pet: 2, petMax: 5, lonely: 45,
     lines: ['もっとなでて〜', 'すき〜💕', 'えへへ'] },
-  { label: 'くいしんぼう', icon: '🍽️', desc: '熟した作物にまっしぐらで食べるのが速い。餌で釣るとすぐ帰る', rush: 1.4, eat: 0.6, lure: 1.8,
+  { label: 'くいしんぼう', icon: '🍽️', desc: '熟した作物にまっしぐら。餌で釣るとすぐ帰る', rush: 1.4, lure: 1.8,
     lines: ['おなかすいた〜', 'にんじん…', 'もぐもぐしたい'] },
   { label: 'おてんば', icon: '⚡', desc: 'よく脱走して逃げ足も速い。手で戻すと💖+5', esc: 0.7, flee: 1.3, bonus: 5,
     lines: ['あそぼ！', 'そと行きたい！', 'かけっこしよ！'] },
@@ -688,7 +688,7 @@ function makeGoat(def, x, y) {
     walkPhase: Math.random() * 6, hop: 0, extraHop: 0, sq: 0, sqv: 0, lastSin: 0,
     escapeT: 0, mood: 'normal', moodT: 0, sulk: 0, bubble: null,
     petCount: 0, petCD: 0, satisfiedT: 0, feedCD: 0, munchT: 0,
-    blinkT: rand(1, 4), blink: 0, eatPlot: -1, eatT: 0, fleeT: 0, fleeSpeed: 0,
+    blinkT: rand(1, 4), blink: 0, eatPlot: -1, fleeT: 0, fleeSpeed: 0,
     returnMode: null, noCropT: 0, outT: 0, fxT: 0, speedNow: 0, stateT: 0, headTilt: 0, exitD0: 1, lonelyT: 0,
   };
 }
@@ -725,7 +725,7 @@ function planEscape(g) {
 }
 function say(g, e, dur = 1.6) { g.bubble = { e, t: 0, dur }; }
 function setState(g, s) { g.state = s; g.stateT = 0; }
-const OUTSIDE_STATES = ['roam', 'eating', 'content', 'pause', 'flee', 'scared', 'lured'];
+const OUTSIDE_STATES = ['roam', 'content', 'pause', 'flee', 'scared', 'lured'];
 const isOutside = g => OUTSIDE_STATES.includes(g.state);
 
 function steer(g, tx, ty, speed, dt) {
@@ -884,7 +884,7 @@ function updateGoat(g, dt, rdt) {
         const side = g.x < p.x ? -1 : 1;
         const tx = p.x + side * p.s * 0.42, ty = p.y + p.s * 0.18;
         const d = steer(g, tx, ty, 38 * s * pv(g, 'rush'), dt);
-        if (d < 2) { setState(g, 'eating'); g.eatT = 2.8 * pv(g, 'eat'); g.dir = -side; }
+        if (d < 2) eatCrop(g, g.eatPlot);   // 畑に着いた瞬間に食べる
       } else {
         g.noCropT += dt;
         if (!g.target) g.target = randomFieldPoint();
@@ -892,21 +892,6 @@ function updateGoat(g, dt, rdt) {
         if (d < 2) g.target = null;
         if (g.noCropT > 14) { setState(g, 'lured'); g.returnMode = 'self'; say(g, '😌', 1.5); }
       }
-      break;
-    }
-    case 'eating': {
-      g.vx = g.vy = 0;
-      const pl = S.plots[g.eatPlot];
-      if (!pl || !pl.crop) { setState(g, 'roam'); g.eatPlot = -1; say(g, '❓', 1); break; }
-      g.eatT -= dt; g.fxT -= dt;
-      if (g.fxT <= 0) {
-        g.fxT = 0.35;
-        const p = L.plots[g.eatPlot];
-        crumbs(p.x, p.y, CROPS[pl.crop].color);
-        floatText(g.x + g.dir * 18 * s, g.y - 40 * s, pick(['もぐ', 'むしゃ', 'もぐもぐ']), '#a0785c', 11 * s);
-        SFX.munch();
-      }
-      if (g.eatT <= 0) eatCrop(g, g.eatPlot);
       break;
     }
     case 'content': {
@@ -963,7 +948,7 @@ function updateGoat(g, dt, rdt) {
 
   // 歩行アニメ（ピョコピョコ）
   g.speedNow = Math.hypot(g.vx, g.vy);
-  if (Math.abs(g.vx) > 3 && g.state !== 'eating') g.dir = Math.sign(g.vx);
+  if (Math.abs(g.vx) > 3) g.dir = Math.sign(g.vx);
   const mv = Math.min(1, g.speedNow / (15 * s));
   g.walkPhase += dt * (4 + g.speedNow / (14 * s)) * (mv > 0.05 ? 1 : 0);
   const amp = (3 + Math.min(10, g.speedNow / (12 * s))) * s;
@@ -972,7 +957,7 @@ function updateGoat(g, dt, rdt) {
   if (mv > 0.3 && Math.sign(sn) !== Math.sign(g.lastSin)) g.sqv -= 1.4 * mv;
   g.lastSin = sn;
   // 頭の動き
-  const munching = g.state === 'eating' || g.munchT > 0;
+  const munching = g.munchT > 0;
   const targetTilt = munching ? 0.4 + Math.sin(g.stateT * 16 + g.munchT * 16) * 0.18 : (g.state === 'scared' ? -0.25 : 0);
   g.headTilt += (targetTilt - g.headTilt) * Math.min(1, rdt * 12);
 }
@@ -1034,8 +1019,9 @@ function eatCrop(g, i) {
   crumbs(p.x, p.y, cr.color); crumbs(p.x, p.y, '#8fd36b');
   addOxy(1, g.x, g.y - 60 * s);
   hearts(g.x, g.y - 34 * s, 3);
-  say(g, '💖', 1.8); g.mood = 'happy'; g.moodT = 2; g.sqv += 3;
-  SFX.heart();
+  floatText(g.x + g.dir * 18 * s, g.y - 40 * s, 'もぐっ！', '#a0785c', 12 * s);
+  say(g, '💖', 1.8); g.mood = 'happy'; g.moodT = 2; g.sqv += 3; g.munchT = 1.2;
+  SFX.munch(); SFX.heart();
   if (!S.seen.eat) { S.seen.eat = true; toast(`もぐもぐ…${cr.name}を食べられた！畑が荒れて${RUIN_T}秒植えられない💦`, 'warn'); }
   g.eatPlot = -1;
   setState(g, 'content');
@@ -1088,7 +1074,7 @@ function seedAction(i, fromDrag) {
       plotFx[i].sqv = -5;
       pl.crop = null; pl.t = 0;
       SFX.harvest(); buzz(12);
-      goats.forEach(g => { if (g.eatPlot === i) { g.eatPlot = -1; if (g.state === 'eating') { setState(g, 'roam'); say(g, '😢', 1.2); } } });
+      goats.forEach(g => { if (g.eatPlot === i) g.eatPlot = -1; });
     } else if (!fromDrag) {
       floatText(p.x, p.y - p.s * 0.45, `あと${realSec((cr.grow - pl.t) / growRateFor(pl.crop))}秒`, '#8b7466', 12 * L.sc);
     }
@@ -1468,13 +1454,12 @@ function drawSprout(h, sc, color) {
   if (color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, -h * 1.05, h * 0.2, 0, TAU); ctx.fill(); ctx.stroke(); }
 }
 
-function drawCrop(i, time, eatenBy) {
+function drawCrop(i, time) {
   const p = L.plots[i], pl = S.plots[i], s = p.s, fx = plotFx[i], sc = L.sc;
   if (!pl.crop) return;
   const cr = CROPS[pl.crop], k = pl.t / cr.grow, ready = k >= 1;
   ctx.save();
   ctx.translate(p.x, p.y + s * 0.14);
-  if (eatenBy) { ctx.translate(rand(-1.5, 1.5) * sc, rand(-1, 1) * sc); const e = clamp(eatenBy.eatT / 2.8, 0.3, 1); ctx.scale(e, e); }
   const sy = 1 + fx.sq, sx = 1 - fx.sq * 0.6;
   ctx.rotate(Math.sin(time * 2 + i * 1.7) * (ready ? 0.04 : 0.08));
   ctx.scale(sx, sy);
@@ -1608,7 +1593,7 @@ function drawGoat(g, time) {
   ctx.strokeStyle = OL; ctx.lineWidth = 1.2;
   ctx.beginPath();
   if (g.mood === 'sulk') { ctx.moveTo(6, 6.5); ctx.lineTo(9.5, 6); }
-  else if (g.state === 'eating' || g.munchT > 0) { ctx.arc(8, 6, 1.6 + Math.abs(Math.sin(time * 16)) * 1.2, 0, TAU); }
+  else if (g.munchT > 0) { ctx.arc(8, 6, 1.6 + Math.abs(Math.sin(time * 16)) * 1.2, 0, TAU); }
   else { ctx.arc(7.6, 5.4, 1.8, 0.2, Math.PI - 0.2); }
   ctx.stroke();
   ear(-2, -5, -0.15 + earW * 0.6);
@@ -2113,10 +2098,8 @@ function render(time, rdt) {
   for (let i = 0; i < MAX_PLOTS; i++) drawPlotBase(i, time);
   drawCourse(time);
   drawFacilities(time);
-  const eaten = {};
-  goats.forEach(g => { if (g.state === 'eating') eaten[g.eatPlot] = g; });
   const list = [];
-  for (let i = 0; i < S.plotCount; i++) if (S.plots[i].crop) list.push({ y: L.plots[i].y + L.plots[i].s * 0.14, f: () => drawCrop(i, time, eaten[i]) });
+  for (let i = 0; i < S.plotCount; i++) if (S.plots[i].crop) list.push({ y: L.plots[i].y + L.plots[i].s * 0.14, f: () => drawCrop(i, time) });
   goats.forEach(g => list.push({ y: g.y, f: () => drawGoat(g, time) }));
   list.sort((a, b) => a.y - b.y).forEach(o => o.f());
   drawSky(time);
