@@ -883,7 +883,7 @@ function updateGoat(g, dt, rdt) {
         const p = L.plots[g.eatPlot];
         const side = g.x < p.x ? -1 : 1;
         const tx = p.x + side * p.s * 0.42, ty = p.y + p.s * 0.18;
-        const d = steer(g, tx, ty, 38 * s * pv(g, 'rush'), dt);
+        const d = steer(g, tx, ty, 46 * s * pv(g, 'rush'), dt);
         if (d < 2) eatCrop(g, g.eatPlot);   // 畑に着いた瞬間に食べる
       } else {
         g.noCropT += dt;
